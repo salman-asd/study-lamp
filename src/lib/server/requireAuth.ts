@@ -13,10 +13,16 @@ import { adminAuth, adminDb } from "@/lib/server/firebase-admin";
 export async function requireAuthenticatedUid(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get("authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
+  // A plain <img src>/<video src> can't set an Authorization header, so the
+  // Drive stream/thumbnail proxy routes (Phase 16) pass the ID token as a
+  // query param instead. Every other route keeps using the header — this is
+  // purely an additional fallback, never a weaker check (verifyIdToken below
+  // validates it identically either way).
+  const token = match?.[1] || req.nextUrl.searchParams.get("idToken") || "";
+  if (!token) return null;
 
   try {
-    const decoded = await adminAuth.verifyIdToken(match[1]);
+    const decoded = await adminAuth.verifyIdToken(token);
     return decoded.uid;
   } catch {
     return null;

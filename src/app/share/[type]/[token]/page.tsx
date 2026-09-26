@@ -34,6 +34,7 @@ function formatPlatformLabel(platform?: VideoPlatform | null): string {
     facebook: "Facebook",
     vimeo: "Vimeo",
     generic: "Other",
+    google_drive: "Google Drive",   // ← add this
   }[platform] || "Other";
 }
 
@@ -77,7 +78,7 @@ export default function SharedItemPage() {
 
   React.useEffect(() => {
     if (!user || share?.entityType !== "playlist") return;
-    listPersonalPlaylists(user.uid).then(setPersonalPlaylists).catch(() => {});
+    listPersonalPlaylists(user.uid).then(setPersonalPlaylists).catch(() => { });
   }, [share?.entityType, user]);
 
   async function addSharedPlaylist() {
@@ -125,7 +126,7 @@ export default function SharedItemPage() {
         <div className="mx-auto max-w-4xl space-y-5">
           <Button variant="ghost" size="sm" onClick={() => router.back()}><ArrowLeft /> Back</Button>
           <Card className="overflow-hidden border-0 shadow-sm">
-            <VideoPlayer youtubeVideoId={youtubeVideoId} videoUrl={share.videoUrl || ""} onProgress={() => {}} onPause={() => {}} onEnded={() => {}} />
+            <VideoPlayer youtubeVideoId={youtubeVideoId} videoUrl={share.videoUrl || ""} onProgress={() => { }} onPause={() => { }} onEnded={() => { }} />
 
             <div className="space-y-5 p-5">
               <div className="flex flex-wrap items-center gap-2">
@@ -205,9 +206,9 @@ export default function SharedItemPage() {
                 <VideoPlayer
                   youtubeVideoId={extractExternalVideoId(share.videos[selectedVideoIndex].videoUrl || "")}
                   videoUrl={share.videos[selectedVideoIndex].videoUrl || ""}
-                  onProgress={() => {}}
-                  onPause={() => {}}
-                  onEnded={() => {}}
+                  onProgress={() => { }}
+                  onPause={() => { }}
+                  onEnded={() => { }}
                 />
               </div>
             )}

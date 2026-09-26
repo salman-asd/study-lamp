@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { generateVideoSummary } from "@/lib/ai/aiService";
+import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
+import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
+
+interface RouteParams {
+  params: { id: string };
+}
+
+const STATUS_BY_CODE: Record<AiErrorCode, number> = {
+  auth: 400, rate_limit: 429, invalid_request: 502, blocked: 422,
+  timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
+};
+
+// Mirrors /api/ai/summary/route.ts exactly, with the document's extracted
+// text standing in for a video transcript — generateVideoSummary only
+// needs { title, description, transcript }, so this reuses it unchanged
+// rather than a parallel document-specific implementation.
+//
+// Like the video route, this does NOT touch Firestore — it just returns the
+// generated text. The Study Materials page saves it into the same
+// users/{uid}/summaries collection a video summary uses (key "d_"+documentId
+// instead of the video's id) via the existing client-side notes.ts helpers,
+// exactly like the video page already does for its own summary.
+export async function POST(req: NextRequest, { params }: RouteParams) {
+  const uid = await requireAuthenticatedUid(req);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const doc = await getPersonalDocument(uid, params.id);
+  if (!doc) return NextResponse.json({ error: "Document not found." }, { status: 404 });
+
+  try {
+    const text = await extractPersonalDocumentText(uid, doc);
+    const summary = await withAiConnection(uid, async (apiKey, provider, model) => {
+      return await generateVideoSummary({ provider, apiKey, model }, { title: doc.title, description: null, transcript: text });
+    });
+    return NextResponse.json({ summary }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (err: any) {
+    if (err instanceof AiServiceError) {
+      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] });
+    }
+    console.error("Unexpected error generating document summary", err);
+    return NextResponse.json({ error: err?.message || "Something went wrong generating a summary." }, { status: 500 });
+  }
+}

@@ -4,7 +4,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computePlaylistSummary, summaryNeedsWrite } from "@/lib/playlistSummary";
-import type { PersonalPlaylist, PersonalPlaylistSortMode, PersonalPlaylistVisibility, PersonalVideo, PriorityLevel, WatchStatus } from "@/types";
+import type { PersonalPlaylist, PersonalPlaylistSortMode, PersonalPlaylistVisibility, PersonalVideo, PriorityLevel, VideoPlatform, WatchStatus } from "@/types";
 
 /**
  * Personal playlists live under users/{ownerId}/personalPlaylists/{id} —
@@ -204,7 +204,7 @@ export async function addExistingVideoToPersonalPlaylist(
     description?: string | null;
     creator?: string | null;
     categoryId?: string | null;
-    platform?: "youtube" | "youtube-shorts" | "facebook" | "vimeo" | "generic";
+    platform?: VideoPlatform;
   }
 ): Promise<boolean> {
   const duplicate = await findDuplicatePersonalVideoUrl(ownerId, playlistId, video.videoUrl);
@@ -224,7 +224,7 @@ export async function bulkAddVideosToPersonalPlaylist(
     durationSeconds?: number;
     description?: string | null;
     creator?: string | null;
-    platform?: "youtube" | "youtube-shorts" | "facebook" | "vimeo" | "generic";
+    platform?: VideoPlatform;
   }>
 ): Promise<number> {
   if (videoList.length === 0) return 0;
@@ -294,7 +294,7 @@ export async function addPersonalVideo(
     publishedAt?: string | null;
     categoryId?: string | null;
     tagIds?: string[];
-    platform?: "youtube" | "youtube-shorts" | "facebook" | "vimeo" | "generic";
+    platform?: VideoPlatform;
   }
 ): Promise<string> {
   const existing = await getDocs(videosCol(ownerId, playlistId));

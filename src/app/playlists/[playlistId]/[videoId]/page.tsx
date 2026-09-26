@@ -377,6 +377,9 @@ function PersonalVideoContent() {
               <VideoPlayer
                 youtubeVideoId={video.youtubeVideoId}
                 videoUrl={video.videoUrl}
+                platform={video.platform}
+                driveFileId={video.driveFileId}
+                driveConnectionId={video.driveConnectionId}
                 startSeconds={video.status === "completed" ? 0 : video.currentPositionSeconds || 0}
                 autoPlay={autoPlayRequested}
                 className={sidebarOnRight ? "max-h-[72vh]" : undefined}

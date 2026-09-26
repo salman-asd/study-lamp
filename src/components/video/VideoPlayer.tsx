@@ -4,16 +4,161 @@ import * as React from "react";
 import YouTube, { type YouTubeProps, type YouTubePlayer } from "react-youtube";
 import { detectVideoPlatform, generateCanonicalUrl, generateEmbedUrl } from "@/lib/video-platforms";
 import { FacebookEmbed } from "./FacebookEmbed";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { driveStreamUrl } from "@/lib/driveClient";
 
 interface Props {
   youtubeVideoId?: string | null;
   videoUrl: string;
+  /** Set together for a platform === "google_drive" video (Phase 16) — see
+   *  DriveVideoPlayer below. Every other platform ignores these. */
+  platform?: string;
+  driveFileId?: string | null;
+  driveConnectionId?: string | null;
   startSeconds?: number;
   autoPlay?: boolean;
   className?: string;
   onProgress: (currentSeconds: number, durationSeconds: number, force?: boolean) => void;
   onPause: (currentSeconds: number, durationSeconds: number, force?: boolean) => void;
   onEnded: (currentSeconds: number, durationSeconds: number) => void;
+}
+
+/**
+ * Dispatches to the right player for a video's platform. Every platform but
+ * Google Drive renders through YouTubeOrEmbedPlayer (unchanged — see its own
+ * doc comment); a platform === "google_drive" video renders through
+ * DriveVideoPlayer instead, since Study Lamp holds the Drive credentials
+ * needed to fetch it securely (see /api/drive/stream/[fileId]) rather than
+ * relying on a public embeddable URL the way every other platform does.
+ */
+export function VideoPlayer({ youtubeVideoId, videoUrl, platform, driveFileId, driveConnectionId, startSeconds = 0, autoPlay = false, className, onProgress, onPause, onEnded }: Props) {
+  if (platform === "google_drive" && driveFileId && driveConnectionId) {
+    return (
+      <DriveVideoPlayer
+        driveFileId={driveFileId}
+        driveConnectionId={driveConnectionId}
+        startSeconds={startSeconds}
+        autoPlay={autoPlay}
+        className={className}
+        onProgress={onProgress}
+        onPause={onPause}
+        onEnded={onEnded}
+      />
+    );
+  }
+
+  return (
+    <YouTubeOrEmbedPlayer
+      youtubeVideoId={youtubeVideoId}
+      videoUrl={videoUrl}
+      startSeconds={startSeconds}
+      autoPlay={autoPlay}
+      className={className}
+      onProgress={onProgress}
+      onPause={onPause}
+      onEnded={onEnded}
+    />
+  );
+}
+
+/**
+ * Secure playback for a Drive-hosted video (Phase 16): a plain native
+ * <video> tag pointed at the ownership-checked stream proxy
+ * (/api/drive/stream/[fileId]) — never a direct Drive URL, and no OAuth
+ * token ever reaches the browser. The proxy forwards Range headers, so
+ * seeking/scrubbing works exactly like a normal <video src> would against
+ * any other file host.
+ *
+ * Native <video> exposes currentTime/duration directly (no postMessage
+ * dance needed the way YouTube's iframe requires), so progress tracking
+ * here is simpler than the YouTube path — same throttling/force-save shape,
+ * reusing the same onProgress/onPause/onEnded contract as every other
+ * player in this file.
+ */
+function DriveVideoPlayer({
+  driveFileId, driveConnectionId, startSeconds, autoPlay, className, onProgress, onPause, onEnded,
+}: {
+  driveFileId: string;
+  driveConnectionId: string;
+  startSeconds: number;
+  autoPlay: boolean;
+  className?: string;
+  onProgress: Props["onProgress"];
+  onPause: Props["onPause"];
+  onEnded: Props["onEnded"];
+}) {
+  const { user } = useAuth();
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const lastSaveRef = React.useRef(0);
+  // idToken is appended as a query param since a bare <video src> can't
+  // carry an Authorization header — the stream proxy's requireAuthenticatedUid
+  // check reads it from there for this one route (see the route's own
+  // handling). A fresh short-lived token is fetched on mount / video change
+  // only, not on every render.
+  const [authedSrc, setAuthedSrc] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!user) return;
+      const idToken = await user.getIdToken();
+      if (!active) return;
+      const base = driveStreamUrl(driveFileId, driveConnectionId);
+      setAuthedSrc(`${base}&idToken=${encodeURIComponent(idToken)}`);
+    })();
+    return () => { active = false; };
+  }, [user, driveFileId, driveConnectionId]);
+
+  function handleLoadedMetadata() {
+    const el = videoRef.current;
+    if (el && startSeconds > 0) el.currentTime = startSeconds;
+    if (autoPlay) el?.play().catch(() => {});
+  }
+
+  function handleTimeUpdate() {
+    const el = videoRef.current;
+    if (!el) return;
+    const now = Date.now();
+    if (now - lastSaveRef.current < 60000) return; // same 60s throttle as the YouTube path
+    lastSaveRef.current = now;
+    onProgress(el.currentTime, el.duration || 0);
+  }
+
+  function handlePause() {
+    const el = videoRef.current;
+    if (!el) return;
+    lastSaveRef.current = Date.now();
+    onPause(el.currentTime, el.duration || 0, true);
+  }
+
+  function handleEnded() {
+    const el = videoRef.current;
+    if (!el) return;
+    onEnded(el.currentTime, el.duration || 0);
+  }
+
+  if (!authedSrc) {
+    return (
+      <div className={['flex aspect-video w-full items-center justify-center rounded-xl bg-black', className].filter(Boolean).join(' ')}>
+        <p className="text-sm text-muted-foreground">Loading from Google Drive…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={['relative z-0 aspect-video w-full overflow-hidden rounded-xl bg-black shadow-sm', className].filter(Boolean).join(' ')}>
+      <video
+        ref={videoRef}
+        src={authedSrc}
+        controls
+        className="h-full w-full"
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onPause={handlePause}
+        onEnded={handleEnded}
+      />
+    </div>
+  );
 }
 
 /**
@@ -36,9 +181,11 @@ interface Props {
  *
  * Only when a platform has no public embed mechanism at all (a bare
  * `generic` URL) does this fall back to a simple "open externally" card —
- * this app never hosts or proxies video files itself.
+ * this app never hosts or proxies video files itself (a Drive video is the
+ * one exception — see DriveVideoPlayer above — because Study Lamp already
+ * holds the credentials to fetch it on the user's behalf).
  */
-export function VideoPlayer({ youtubeVideoId, videoUrl, startSeconds = 0, autoPlay = false, className, onProgress, onPause, onEnded }: Props) {
+function YouTubeOrEmbedPlayer({ youtubeVideoId, videoUrl, startSeconds = 0, autoPlay = false, className, onProgress, onPause, onEnded }: Omit<Props, "platform" | "driveFileId" | "driveConnectionId">) {
   const playerRef = React.useRef<YouTubePlayer | null>(null);
   const intervalRef = React.useRef<ReturnType<typeof setInterval>>();
   // The YouTube IFrame API's own internal messaging can throw (its minified

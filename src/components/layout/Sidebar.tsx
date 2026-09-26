@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ListVideo, Clock, Star, Flag, PlayCircle, BookOpenCheck, Share2,
   ShieldCheck, Users, FolderKanban, Tags, Target, Compass, X, Settings, ChevronDown, Sparkles,
+  HardDrive, FileText, DatabaseBackup,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -14,6 +15,7 @@ const studentNav = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard, tour: "nav-home" },
   { href: "/playlists", label: "Playlists", icon: ListVideo, tour: "nav-playlists" },
   { href: "/library", label: "Library", icon: ListVideo, tour: "nav-library" },
+  { href: "/study-materials", label: "Study Materials", icon: FileText },
   { href: "/shared", label: "Shared", icon: Share2 },
   { href: "/continue-learning", label: "Continue Learning", icon: PlayCircle, tour: "nav-continue" },
   { href: "/watch-later", label: "Watch Later", icon: Clock },
@@ -90,6 +92,8 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
             <SidebarLink href="/settings/ai" label="AI Connections" icon={Sparkles} active={pathname.startsWith("/settings/ai") || pathname === "/settings"} onClick={onClose} />
             <SidebarLink href="/settings/interests" label="Interests" icon={Compass} active={pathname.startsWith("/settings/interests")} onClick={onClose} />
             <SidebarLink href="/settings/categories" label="Categories" icon={FolderKanban} active={pathname.startsWith("/settings/categories")} onClick={onClose} />
+            <SidebarLink href="/settings/drive" label="Google Drive" icon={HardDrive} active={pathname.startsWith("/settings/drive")} onClick={onClose} />
+            <SidebarLink href="/settings/backup" label="Backups" icon={DatabaseBackup} active={pathname.startsWith("/settings/backup")} onClick={onClose} />
             {isAdmin && (
               <SidebarLink href="/settings/tags" label="Tags" icon={Tags} active={pathname.startsWith("/settings/tags")} onClick={onClose} />
             )}

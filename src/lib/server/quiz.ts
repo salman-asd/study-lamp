@@ -10,6 +10,10 @@ function personalQuizRef(ownerId: string, playlistId: string, videoId: string) {
   return adminDb.doc(`users/${ownerId}/personalPlaylists/${playlistId}/videos/${videoId}/quiz/data`); // ✅ added /data
 }
 
+function documentQuizRef(ownerId: string, documentId: string) {
+  return adminDb.doc(`users/${ownerId}/personalDocuments/${documentId}/quiz/data`);
+}
+
 async function getQuiz(ref: FirebaseFirestore.DocumentReference): Promise<VideoQuizCache | null> {
   const snap = await ref.get();
   return snap.exists ? (snap.data() as VideoQuizCache) : null;
@@ -41,4 +45,12 @@ export function getPersonalVideoQuiz(ownerId: string, playlistId: string, videoI
 
 export function savePersonalVideoQuiz(ownerId: string, playlistId: string, videoId: string, questions: QuizQuestion[], sourceHash: string) {
   return saveQuiz(personalQuizRef(ownerId, playlistId, videoId), questions, sourceHash);
+}
+
+export function getDocumentQuiz(ownerId: string, documentId: string) {
+  return getQuiz(documentQuizRef(ownerId, documentId));
+}
+
+export function saveDocumentQuiz(ownerId: string, documentId: string, questions: QuizQuestion[], sourceHash: string) {
+  return saveQuiz(documentQuizRef(ownerId, documentId), questions, sourceHash);
 }

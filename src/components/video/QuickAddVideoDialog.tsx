@@ -3,6 +3,7 @@
 import * as React from "react";
 import { VideoThumbnail } from "@/components/video/VideoThumbnail";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,7 @@ import type { PersonalPlaylist } from "@/types";
 import { formatDuration } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { DriveImportPanel } from "@/components/drive/DriveImportPanel";
 
 export function QuickAddVideoDialog({
   ownerId, playlists, open, onOpenChange, onSaved,
@@ -110,27 +112,34 @@ export function QuickAddVideoDialog({
     <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); onOpenChange(next); }}>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>Save Video</DialogTitle></DialogHeader>
+        <div className="space-y-1.5">
+          <Label>Playlist (optional)</Label>
+          <Select value={playlistId || "unsorted"} onValueChange={(value) => setPlaylistId(value === "unsorted" ? "" : value)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+                <Input
+                  value={playlistQuery}
+                  onChange={(event) => setPlaylistQuery(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  placeholder="Search playlists..."
+                  aria-label="Search playlists"
+                />
+              </div>
+              <SelectItem value="unsorted">Unsorted</SelectItem>
+              {visiblePlaylists.map((playlist) => <SelectItem key={playlist.id} value={playlist.id}>{playlist.title}</SelectItem>)}
+              {visiblePlaylists.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No playlists found.</p>}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Tabs defaultValue="link" className="mt-2">
+          <TabsList>
+            <TabsTrigger value="link">Link</TabsTrigger>
+            <TabsTrigger value="drive">Google Drive</TabsTrigger>
+          </TabsList>
+          <TabsContent value="link">
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Playlist (optional)</Label>
-            <Select value={playlistId || "unsorted"} onValueChange={(value) => setPlaylistId(value === "unsorted" ? "" : value)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
-                  <Input
-                    value={playlistQuery}
-                    onChange={(event) => setPlaylistQuery(event.target.value)}
-                    onKeyDown={(event) => event.stopPropagation()}
-                    placeholder="Search playlists..."
-                    aria-label="Search playlists"
-                  />
-                </div>
-                <SelectItem value="unsorted">Unsorted</SelectItem>
-                {visiblePlaylists.map((playlist) => <SelectItem key={playlist.id} value={playlist.id}>{playlist.title}</SelectItem>)}
-                {visiblePlaylists.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No playlists found.</p>}
-              </SelectContent>
-            </Select>
-          </div>
           <div className="space-y-1.5">
             <Label>Video URL</Label>
             <Input value={newUrl} onChange={(event) => setNewUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
@@ -144,6 +153,15 @@ export function QuickAddVideoDialog({
           <div className="space-y-1.5"><Label>Thumbnail URL</Label><Input value={newThumb} onChange={(event) => setNewThumb(event.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Description (optional)</Label><textarea value={newDescription} onChange={(event) => setNewDescription(event.target.value)} className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm" /></div>
         </div>
+          </TabsContent>
+          <TabsContent value="drive">
+            <DriveImportPanel
+              playlistId={playlistId || undefined}
+              accept="video/*"
+              onImported={() => { reset(); onOpenChange(false); onSaved?.(); }}
+            />
+          </TabsContent>
+        </Tabs>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving || urlStatus === "checking" || !newUrl.trim()}>{saving ? "Saving..." : "Save video"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>

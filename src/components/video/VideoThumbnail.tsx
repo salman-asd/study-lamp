@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ImageOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 // Re-exported so existing imports (and tests) of these helpers from this module keep working.
 export { signedUrlExpiry, hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
@@ -75,6 +76,12 @@ export function VideoThumbnail({
   overlayStart,
 }: VideoThumbnailProps) {
   const [failed, setFailed] = React.useState(false);
+  // A Drive-hosted thumbnail (Phase 16) is served through our own
+  // ownership-checked proxy, which needs the viewer's ID token — a plain
+  // <img>/<Image> src can't carry an Authorization header, so it's appended
+  // as a query param instead (the proxy route accepts either; see
+  // requireAuthenticatedUid). Every other thumbnail source is unaffected.
+  const driveAuthedSrc = useDriveAuthedSrc(src);
 
   // A thumbnail URL can change (video edited, re-scraped) while the component
   // stays mounted. Without this reset, one failed load would permanently
@@ -87,7 +94,7 @@ export function VideoThumbnail({
     }
   }, [src]);
 
-  const hasSrc = typeof src === "string" && src.trim().length > 0;
+  const hasSrc = typeof driveAuthedSrc === "string" && driveAuthedSrc.trim().length > 0;
   const showFallback = !hasSrc || failed;
 
   const pct = clampPercent(progressPercent);
@@ -105,17 +112,17 @@ export function VideoThumbnail({
           // appending even a harmless-looking cache-buster invalidates it and
           // guarantees a 403. An earlier revision retried with `?_thumbRetry=N`
           // and broke these URLs that way.
-          src={src as string}
+          src={driveAuthedSrc as string}
           alt={alt}
           fill
           sizes={sizes}
           priority={priority}
           // Load Facebook/Instagram thumbnails straight from the browser rather
           // than through the image optimizer. See needsUnoptimizedLoad for why.
-          unoptimized={skipOptimizer(src as string, videoUrl)}
+          unoptimized={skipOptimizer(driveAuthedSrc as string, videoUrl)}
           // No referrer is the other half of the hotlink workaround, and is
           // harmless for YouTube/self-hosted images.
-          referrerPolicy={skipOptimizer(src as string, videoUrl) ? "no-referrer" : undefined}
+          referrerPolicy={skipOptimizer(driveAuthedSrc as string, videoUrl) ? "no-referrer" : undefined}
           className="object-cover transition-transform duration-300 group-hover:scale-105"
           onError={() => setFailed(true)}
         />
@@ -214,8 +221,38 @@ export function skipOptimizer(src: string, videoUrl?: string | null): boolean {
     candidates.includes("facebook.com") ||
     candidates.includes("fb.watch") ||
     candidates.includes("instagram.com") ||
-    candidates.includes("cdninstagram.com")
+    candidates.includes("cdninstagram.com") ||
+    // A Drive-proxied thumbnail's ID token is short-lived; letting Next's
+    // optimizer cache the fetched bytes is fine, but there's no benefit to
+    // routing it through the optimizer's own fetch (still same-origin,
+    // still one request either way), so it's simplest to always bypass it.
+    candidates.includes("/api/drive/thumbnail/")
   );
+}
+
+/** Appends the current user's ID token to a Drive thumbnail proxy URL.
+ *  Every other src passes through unchanged. Re-fetches the token whenever
+ *  the underlying src changes (a new video, or the token naturally
+ *  rotating on a long-open tab doesn't need to be handled — a stale token
+ *  just gets a fresh one next time this src changes or the page reloads). */
+function useDriveAuthedSrc(src?: string | null): string | null | undefined {
+  const { user } = useAuth();
+  const [resolved, setResolved] = React.useState(src);
+
+  React.useEffect(() => {
+    if (!src || !src.includes("/api/drive/thumbnail/")) {
+      setResolved(src);
+      return;
+    }
+    if (!user) return;
+    let active = true;
+    user.getIdToken().then((idToken) => {
+      if (active) setResolved(`${src}&idToken=${encodeURIComponent(idToken)}`);
+    });
+    return () => { active = false; };
+  }, [src, user]);
+
+  return resolved;
 }
 
 function clampPercent(value: number | null | undefined): number {
