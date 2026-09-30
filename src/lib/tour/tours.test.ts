@@ -125,15 +125,14 @@ describe("tour state", () => {
     }
   });
 
-  it("auto-runs only for new accounts that finished onboarding and never saw the tour", () => {
-    const base = { records: {}, def, createdAtMs: now - 24 * 3600 * 1000, onboardingDone: true, now };
+  it("auto-runs only for new accounts that never saw the tour", () => {
+    const base = { records: {}, def, createdAtMs: now - 24 * 3600 * 1000, now };
     assert.equal(shouldAutoRunWelcome(base), true);
-    assert.equal(shouldAutoRunWelcome({ ...base, onboardingDone: false }), false);
     assert.equal(shouldAutoRunWelcome({ ...base, records: { welcome: { v: 2, status: "skipped" } } }), false);
     assert.equal(shouldAutoRunWelcome({ ...base, createdAtMs: now - AUTO_RUN_MAX_ACCOUNT_AGE_MS - 1 }), false);
   });
 
   it("never auto-runs when the account age is unknown", () => {
-    assert.equal(shouldAutoRunWelcome({ records: {}, def, createdAtMs: 0, onboardingDone: true, now }), false);
+    assert.equal(shouldAutoRunWelcome({ records: {}, def, createdAtMs: 0, now }), false);
   });
 });

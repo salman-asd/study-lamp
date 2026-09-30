@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoQuiz, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
-import { getYouTubeTranscript, TranscriptUnavailableError } from "@/lib/ai/transcript";
+import { resolveTranscript } from "@/lib/ai/universalTranscript";
 import { getAiPreferences } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { buildVideoSourceHash } from "@/lib/quizSource";
@@ -24,6 +24,8 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
   unknown: 500,
 };
 
+const TRANSCRIPT_MAX_LENGTH = 50000;
+
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {
@@ -45,9 +47,17 @@ export async function POST(req: NextRequest) {
   const description = typeof b.description === "string" ? b.description : null;
   const summary = typeof b.summary === "string" ? b.summary : null;
   const youtubeVideoId = typeof b.youtubeVideoId === "string" ? b.youtubeVideoId.trim() : "";
+  // Phase 4 (roadmap v3): a non-YouTube video's manually pasted/uploaded
+  // transcript (users/{uid}/transcripts/{videoId} — see
+  // src/lib/firestore/transcripts.ts), sent by the client the same way
+  // `summary` already is.
+  const manualTranscript = typeof b.manualTranscript === "string" ? b.manualTranscript : "";
+  if (manualTranscript.length > TRANSCRIPT_MAX_LENGTH) {
+    return NextResponse.json({ error: "manualTranscript is too long." }, { status: 400 });
+  }
 
-  if (!summary?.trim() && !youtubeVideoId) {
-    return NextResponse.json({ error: "Add a summary or use a YouTube video with available captions before generating a quiz." }, { status: 422 });
+  if (!summary?.trim() && !youtubeVideoId && !manualTranscript.trim()) {
+    return NextResponse.json({ error: "Add a summary, a transcript, or use a YouTube video with available captions before generating a quiz." }, { status: 422 });
   }
   if (ownerId && ownerId !== uid) {
     return NextResponse.json({ error: "You can only generate quizzes for your own personal videos." }, { status: 403 });
@@ -58,7 +68,39 @@ export async function POST(req: NextRequest) {
   if (ownerId && (!playlistId || !videoId)) {
     return NextResponse.json({ error: "A playlistId and videoId are required for a personal video quiz." }, { status: 400 });
   }
-  const sourceHash = buildVideoSourceHash(title || "", description, summary);
+
+  // Phase 5 (roadmap v3) bug fix: this used to skip fetching a transcript
+  // whenever a summary existed, even when a transcript was available —
+  // meaning quizzes silently ignored transcript detail the moment a
+  // summary was saved. Resolve the transcript FIRST and unconditionally
+  // (any platform, via resolveTranscript — not just YouTube), and only
+  // fall back to the saved summary when no transcript exists at all.
+  // buildQuizPrompt's own instructions also prefer transcript > summary,
+  // so passing both through is safe either way.
+  let transcript: string | null;
+  try {
+    transcript = await resolveTranscript({ youtubeVideoId, manualTranscript });
+  } catch (error) {
+    console.error("Unexpected error resolving a transcript for quiz generation", error);
+    return NextResponse.json({ error: "Unable to retrieve a transcript for this video." }, { status: 502 });
+  }
+
+  if (!transcript && !summary?.trim()) {
+    const preferences = await getAiPreferences(uid).catch(() => ({ speechToTextEnabled: false }));
+    return NextResponse.json(
+      {
+        error: preferences.speechToTextEnabled
+          ? "No transcript is available. Speech-to-text fallback is enabled, but no transcription service is configured yet."
+          : "No transcript or captions are available. Paste or upload a transcript for this video, or write a summary, before generating a quiz.",
+      },
+      { status: 422 }
+    );
+  }
+
+  // Source hash now includes the transcript (Phase 5) so a changed
+  // transcript — a better manual paste, newly-available captions —
+  // correctly invalidates a cached quiz instead of serving a stale one.
+  const sourceHash = buildVideoSourceHash(title || "", description, summary, transcript);
 
   let cachedQuiz;
   if (ownerId && playlistId && videoId) {
@@ -71,31 +113,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ questions: cachedQuiz.questions }, { headers: { "Cache-Control": "private, no-store" } });
   }
 
-  let transcript: string | undefined;
-  if (!summary || !summary.trim()) {
-    try {
-      transcript = await getYouTubeTranscript(youtubeVideoId);
-    } catch (error) {
-      if (error instanceof TranscriptUnavailableError) {
-        const preferences = await getAiPreferences(uid).catch(() => ({ speechToTextEnabled: false }));
-        return NextResponse.json(
-          {
-            error: preferences.speechToTextEnabled
-              ? "No YouTube transcript is available. Speech-to-text fallback is enabled, but no transcription service is configured yet."
-              : "No YouTube transcript or captions are available. Enable speech-to-text fallback in AI Settings once a transcription service is configured.",
-          },
-          { status: 422 }
-        );
-      }
-      return NextResponse.json({ error: "Unable to retrieve the YouTube transcript." }, { status: 502 });
-    }
-  }
-
   try {
     const questions = await withAiConnection(uid, async (apiKey, provider, model) => {
       return await generateVideoQuiz(
         { provider, apiKey, model },
-        { title, description, transcript, summary }
+        { title, description, transcript: transcript || undefined, summary }
       );
     });
 
@@ -123,3 +145,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Something went wrong generating a quiz." }, { status: 500 });
   }
 }
+

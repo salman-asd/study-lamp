@@ -232,7 +232,8 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Welcome tour: auto-runs once for new accounts that finished onboarding, on the dashboard.
+  // Welcome tour: auto-runs once for new accounts, on the dashboard (see
+  // shouldAutoRunWelcome — Phase 1 dropped the onboardingCompletedAt gate).
   React.useEffect(() => {
     if (!user || !profile || pathname !== "/dashboard") return;
     if (new URLSearchParams(window.location.search).has("notour")) return;
@@ -242,7 +243,6 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
       records,
       def,
       createdAtMs: toMillis(profile.createdAt),
-      onboardingDone: !!profile.onboardingCompletedAt,
       now: Date.now(),
     });
     if (!ok) return;

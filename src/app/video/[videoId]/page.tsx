@@ -11,6 +11,7 @@ import { PlaylistSidebar } from "@/components/video/PlaylistSidebar";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
+import { TranscriptInput } from "@/components/video/TranscriptInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { getPlaylist, listVideos } from "@/lib/firestore/playlists";
 import { getUserVideoState, saveProgress, setPriority, setWatchedStatus, toggleFavorite, toggleWatchLater } from "@/lib/firestore/userVideoState";
 import { deleteNote, getNote, getSummary, saveNote, saveSummary } from "@/lib/firestore/notes";
+import { getTranscript, saveTranscript } from "@/lib/firestore/transcripts";
 import { addBookmark, listBookmarks, removeBookmark } from "@/lib/firestore/bookmarks";
 import { generateStarterSummary } from "@/lib/aiSummaryClient";
 import { generateVideoQuizForCurrentVideo } from "@/lib/quizClient";
@@ -57,6 +59,8 @@ function VideoPageContent() {
   const [bookmarkSaving, setBookmarkSaving] = React.useState(false);
   const [summary, setSummary] = React.useState("");
   const [generatingSummary, setGeneratingSummary] = React.useState(false);
+  const [transcript, setTranscript] = React.useState("");
+  const [transcriptSaving, setTranscriptSaving] = React.useState(false);
   const [quizQuestions, setQuizQuestions] = React.useState<QuizQuestion[]>([]);
   const [quizLoading, setQuizLoading] = React.useState(false);
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
@@ -95,13 +99,14 @@ function VideoPageContent() {
   const load = React.useCallback(async () => {
     if (!user || !playlistId) return;
     setLoading(true);
-    const [p, vids, s, n, sm, bm] = await Promise.all([
+    const [p, vids, s, n, sm, bm, tr] = await Promise.all([
       getPlaylist(playlistId),
       listVideos(playlistId),
       getUserVideoState(user.uid, videoId),
       getNote(user.uid, videoId),
       getSummary(user.uid, videoId),
       listBookmarks(user.uid, videoId),
+      getTranscript(user.uid, videoId),
     ]);
     setPlaylistVideos(vids);
     setPlaylistTitle(p?.title || "Current playlist");
@@ -110,6 +115,7 @@ function VideoPageContent() {
     setNote(n?.content || "");
     setSummary(sm?.content || "");
     setBookmarks(bm);
+    setTranscript(tr?.content || "");
     setLoading(false);
   }, [user, playlistId, videoId]);
 
@@ -147,6 +153,17 @@ function VideoPageContent() {
     }
   }
 
+  async function handleSaveTranscript() {
+    if (!user) return;
+    setTranscriptSaving(true);
+    try {
+      await saveTranscript(user.uid, videoId, transcript);
+      toast.success(transcript.trim() ? "Transcript saved" : "Transcript cleared");
+    } finally {
+      setTranscriptSaving(false);
+    }
+  }
+
   async function handleGenerateSummary() {
     if (!user || !video || generatingSummary) return;
     if (summary.trim() && !confirm("Replace your current summary with an AI-generated starter draft? This can't be undone.")) {
@@ -157,6 +174,7 @@ function VideoPageContent() {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
         youtubeVideoId: video.youtubeVideoId || "",
+        manualTranscript: transcript,
       });
       const draftHtml = toSummaryHtml(draft);
       setSummary(draftHtml);
@@ -176,6 +194,7 @@ function VideoPageContent() {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
         youtubeVideoId: video.youtubeVideoId || "",
+        manualTranscript: transcript,
         videoId,
         playlistId,
         title: video.title,
@@ -395,6 +414,7 @@ function VideoPageContent() {
             <Tabs defaultValue="summary">
               <TabsList>
                 <TabsTrigger value="summary">Summary</TabsTrigger>
+                {!video?.youtubeVideoId && <TabsTrigger value="transcript">Transcript</TabsTrigger>}
                 <TabsTrigger value="notes">Notes</TabsTrigger>
                 <TabsTrigger value="quiz">Quiz</TabsTrigger>
                 <TabsTrigger value="bookmarks">Bookmarks</TabsTrigger>
@@ -420,10 +440,21 @@ function VideoPageContent() {
                   placeholder="Write your own summary of this video's key ideas…"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Autosaves as you type. Only visible to you (and admins). AI uses available YouTube captions to
-                  draft a summary, key points, and topics.
+                  Autosaves as you type. Only visible to you (and admins). AI uses this video&apos;s transcript
+                  (YouTube captions, or one you provide) to draft a summary, key points, and topics.
                 </p>
               </TabsContent>
+
+              {!video?.youtubeVideoId && (
+                <TabsContent value="transcript">
+                  <TranscriptInput
+                    value={transcript}
+                    onChange={setTranscript}
+                    onSave={handleSaveTranscript}
+                    saving={transcriptSaving}
+                  />
+                </TabsContent>
+              )}
 
               <TabsContent value="notes">
                 <div className="space-y-3">

@@ -151,6 +151,11 @@ export interface UserProfile {
    *  meaningful events only (not on every keystroke) so the admin table
    *  can render without fanning out reads across every student. */
   stats?: UserStatsSnapshot;
+  /** Phase 1 (roadmap v3): set true when the user picks "Don't ask again"
+   *  on the dashboard's InterestsBanner. Onboarding is no longer a forced
+   *  gate, so this is the only thing standing between an empty-interests
+   *  profile and the banner showing again on a future visit. */
+  interestsBannerDismissed?: boolean;
 }
 
 export interface UserStatsSnapshot {
@@ -299,6 +304,16 @@ export interface VideoNote {
 }
 
 export interface VideoSummary {
+  videoId: string;
+  content: string;
+  updatedAt: Timestamp | null;
+}
+
+/** Phase 4 (roadmap v3) — a manually pasted or uploaded (.srt/.vtt)
+ *  transcript, stored per-user/per-video the same way notes/summaries are.
+ *  Used as a fallback source for any video with no official captions
+ *  (see src/lib/ai/universalTranscript.ts). */
+export interface VideoTranscript {
   videoId: string;
   content: string;
   updatedAt: Timestamp | null;

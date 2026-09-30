@@ -12,16 +12,24 @@ export function recordFor(
   return rec && rec.v >= def.version ? rec : null;
 }
 
-/** Welcome tour auto-runs once, for new accounts that have finished onboarding. */
+/**
+ * Welcome tour auto-runs once, for new accounts, on their first real visit
+ * to the dashboard.
+ *
+ * Phase 1 (roadmap v3) removed onboarding as a forced gate before the
+ * dashboard, so a brand-new profile very often never sets
+ * onboardingCompletedAt at all. This used to require onboardingDone to be
+ * true, which meant the tour would now simply never fire for most new
+ * users — accountAge is what actually identifies "a new account", so it
+ * alone gates the auto-run.
+ */
 export function shouldAutoRunWelcome(input: {
   records: Record<string, TourRecordLike | undefined> | null | undefined;
   def: Pick<TourDef, "id" | "version">;
   createdAtMs: number;
-  onboardingDone: boolean;
   now: number;
 }): boolean {
-  const { records, def, createdAtMs, onboardingDone, now } = input;
-  if (!onboardingDone) return false;
+  const { records, def, createdAtMs, now } = input;
   if (recordFor(records, def)) return false;
   // Unknown creation time → treat as an existing account (chip only). Never ambush.
   if (!createdAtMs) return false;

@@ -80,7 +80,7 @@ describe("parseQuizQuestionsFromText", () => {
     }])), /Invalid quiz response/);
   });
 
-  it("prioritizes transcript and saved summary over title and description in the quiz prompt", () => {
+  it("prioritizes transcript over saved summary, and both over title and description, in the quiz prompt", () => {
     const prompt = buildQuizPrompt({
       title: "Intro to plants",
       description: "A short overview of plant biology.",
@@ -89,11 +89,24 @@ describe("parseQuizQuestionsFromText", () => {
     });
 
     assert.ok(prompt.includes("Transcript:"));
-    assert.ok(prompt.includes("Saved summary:"));
+    assert.ok(prompt.includes("Saved summary"));
     assert.ok(prompt.includes("Title:"));
     assert.ok(prompt.includes("Description:"));
-    assert.ok(prompt.indexOf("Transcript:") < prompt.indexOf("Title:"));
-    assert.ok(prompt.indexOf("Saved summary:") < prompt.indexOf("Title:"));
+    assert.ok(prompt.indexOf("Transcript:") < prompt.indexOf("Saved summary"));
+    assert.ok(prompt.indexOf("Saved summary") < prompt.indexOf("Title:"));
+  });
+
+  it("enforces a fixed question-type mix: recall, conceptual, application, reasoning", () => {
+    const prompt = buildQuizPrompt({
+      title: "Intro to plants",
+      transcript: "Plants use chlorophyll to capture sunlight.",
+    });
+
+    assert.ok(/direct\/recall/i.test(prompt));
+    assert.ok(/conceptual/i.test(prompt));
+    assert.ok(/application/i.test(prompt) && /new scenario/i.test(prompt));
+    assert.ok(/reasoning\/inference/i.test(prompt));
+    assert.ok(/answerable from the material alone/i.test(prompt));
   });
 });
 

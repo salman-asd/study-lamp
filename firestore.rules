@@ -28,6 +28,21 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
     }
 
+    // Bootstraps the very first admin account without needing a Cloud
+    // Function to mint it server-side. This list MUST be kept in sync by
+    // hand with the NEXT_PUBLIC_SEED_ADMIN_EMAILS env var read in
+    // src/components/auth/AuthProvider.tsx — that's the only other place
+    // this decision is made. Emails are matched lowercase; a bare email
+    // string here does not grant anything by itself, it only allows THAT
+    // signed-in, verified account to create its own profile with
+    // role == 'admin' the first time (create only — see /users rules).
+    // Add/remove an email here whenever you change the env var.
+    function isSeedAdminEmail() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email.lower() in ['shofiq@gmail.com'];
+    }
+
     // ── Shape/validation helpers ───────────────────────────────────────
     // These validate "IF the field is present in the resulting document,
     // it must be well-formed" rather than "the field must always be
@@ -95,7 +110,8 @@ service cloud.firestore {
       // brand-new email/password sign-up cannot start using the app before confirming its address.
       allow create: if isSelf(uid) &&
         request.auth.token.email_verified == true &&
-        request.resource.data.role == 'student' &&
+        (request.resource.data.role == 'student' ||
+          (request.resource.data.role == 'admin' && isSeedAdminEmail())) &&
         request.resource.data.status in ['active', 'disabled'];
       // Users may update their own profile EXCEPT role/status (privilege
       // escalation guard). Admins may update anything on any profile.
@@ -134,6 +150,17 @@ service cloud.firestore {
         allow delete: if isSelf(uid) || isAdmin();
       }
       match /summaries/{videoId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow create, update: if (isSelf(uid) || isAdmin()) &&
+          request.resource.data.content is string &&
+          request.resource.data.content.size() <= 50000;
+        allow delete: if isSelf(uid) || isAdmin();
+      }
+
+      // Manually pasted/uploaded transcripts (Phase 4 — universal
+      // transcript input for non-YouTube videos). Same per-user, per-video
+      // shape and size guard as notes/summaries above.
+      match /transcripts/{videoId} {
         allow read: if isSelf(uid) || isAdmin();
         allow create, update: if (isSelf(uid) || isAdmin()) &&
           request.resource.data.content is string &&

@@ -21,6 +21,7 @@ import {
   countCompletedSince, isBrandNewUser, pickPrimaryFocus, resolveCategoryName,
 } from "@/lib/dashboardUtils";
 import { MotivationBanner } from "@/components/dashboard/MotivationBanner";
+import { InterestsBanner } from "@/components/dashboard/InterestsBanner";
 import { Sparkline, BarChart, DonutChart } from "@/components/ui/charts";
 import { computeDailyPace, describeDueDate, getGoalLinkedPlaylists, getGoalLinkedVideos } from "@/lib/goalUtils";
 import { TourChip } from "@/components/tour/TourChip";
@@ -381,20 +382,12 @@ function DashboardContent() {
           )}
         </div>
 
-        {!loading && (!profile?.interests || profile.interests.length === 0) && (
-          <section className="rounded-2xl border border-dashed border-accent/50 bg-accent/5 p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium text-accent">Choose your learning focus</p>
-                <h2 className="mt-1 font-display text-xl font-semibold">Build a dashboard around what matters to you.</h2>
-                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Select a few interests to unlock roadmap steps, recommendations, and more useful progress guidance.</p>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button asChild><Link href="/onboarding">Set up interests</Link></Button>
-                <Button asChild variant="outline"><Link href="/settings">Review settings</Link></Button>
-              </div>
-            </div>
-          </section>
+        {!loading && user?.uid && (
+          <InterestsBanner
+            uid={user.uid}
+            interests={profile?.interests}
+            permanentlyDismissed={profile?.interestsBannerDismissed === true}
+          />
         )}
         {/* Phase D: get started (brand-new user).
             A first-time user gets ONE clear next action instead of a wall of

@@ -10,7 +10,10 @@ async function parseOrThrow(res: Response): Promise<any> {
 }
 
 export interface GenerateStarterSummaryInput {
-  youtubeVideoId: string;
+  youtubeVideoId?: string;
+  /** Phase 4 (roadmap v3): a manually pasted/uploaded transcript, used when
+   *  there's no YouTube video (or no captions) to fall back on. */
+  manualTranscript?: string;
 }
 
 export async function generateStarterSummary(
