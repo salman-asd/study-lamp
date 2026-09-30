@@ -325,6 +325,14 @@ function DashboardContent() {
   return (
     <AppShell>
       <div className="mx-auto max-w-7xl space-y-8">
+        {!loading && user?.uid && (
+          <InterestsBanner
+            uid={user.uid}
+            interests={profile?.interests}
+            permanentlyDismissed={profile?.interestsBannerDismissed === true}
+          />
+        )}
+
         {/* Phase D: prominent, rotating motivation line. Sits above the stat
             strip so it is the first thing read, and is dismissible. */}
         <MotivationBanner
@@ -382,13 +390,6 @@ function DashboardContent() {
           )}
         </div>
 
-        {!loading && user?.uid && (
-          <InterestsBanner
-            uid={user.uid}
-            interests={profile?.interests}
-            permanentlyDismissed={profile?.interestsBannerDismissed === true}
-          />
-        )}
         {/* Phase D: get started (brand-new user).
             A first-time user gets ONE clear next action instead of a wall of
             empty charts and zeros. */}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { signDriveState, isDriveConfigured } from "@/lib/server/googleDrive";
+import { buildAuthUrl, signDriveState, isDriveConfigured } from "@/lib/server/googleDrive";
 
 // Step 1 of the OAuth flow (Phase 13): the browser calls this (authenticated,
 // normal fetch with an Authorization header) to get a short-lived signed
@@ -17,5 +17,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ state: signDriveState(uid) });
+  const state = signDriveState(uid);
+  return NextResponse.json({ url: buildAuthUrl(req.nextUrl.origin, state) });
 }

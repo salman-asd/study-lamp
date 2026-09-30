@@ -3,6 +3,16 @@ import type { TourDef, TourRecordLike } from "./types";
 /** Accounts newer than this may get the welcome tour automatically; older ones only see the chip. */
 export const AUTO_RUN_MAX_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Uses Firebase Auth creation time while a newly-written Firestore serverTimestamp is unresolved. */
+export function resolveAccountCreatedAtMs(profileCreatedAt: unknown, authCreationTime?: string): number {
+  const profileTime = profileCreatedAt as { toMillis?: () => number } | undefined;
+  const profileMs = typeof profileTime?.toMillis === "function" ? profileTime.toMillis() : 0;
+  if (profileMs > 0) return profileMs;
+
+  const authMs = Date.parse(authCreationTime || "");
+  return Number.isFinite(authMs) ? authMs : 0;
+}
+
 /** A record counts only if it is for this version (or newer). */
 export function recordFor(
   records: Record<string, TourRecordLike | undefined> | null | undefined,

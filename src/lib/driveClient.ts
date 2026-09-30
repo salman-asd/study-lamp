@@ -27,26 +27,16 @@ export async function disconnectDrive(idToken: string, connectionId: string): Pr
   await parseOrThrow(res);
 }
 
-/** Kicks off the OAuth connect flow: fetches a signed state token, builds
- *  the Google auth URL client-side, and navigates the whole page there.
- *  Google eventually redirects back to /settings/drive via our own
+/** Kicks off the OAuth connect flow and navigates to the server-built Google
+ *  auth URL. Google eventually redirects back to /settings/drive via our own
  *  /api/drive/auth/callback route. */
 export async function startDriveConnect(idToken: string): Promise<void> {
   const res = await fetch("/api/drive/auth/state", { method: "POST", headers: authHeaders(idToken) });
   const data = await parseOrThrow(res);
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID;
-  if (!clientId) throw new Error("Google Drive isn't configured on this deployment (missing NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID).");
-
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: `${window.location.origin}/api/drive/auth/callback`,
-    response_type: "code",
-    scope: "https://www.googleapis.com/auth/drive.file",
-    access_type: "offline",
-    prompt: "consent",
-    state: data.state,
-  });
-  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  if (typeof data.url !== "string" || !data.url.startsWith("https://accounts.google.com/")) {
+    throw new Error("Google Drive returned an invalid authorization URL.");
+  }
+  window.location.href = data.url;
 }
 
 /** Short-lived (~1hr) access token for client-side use by the Google Picker

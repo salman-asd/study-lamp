@@ -7,12 +7,11 @@ import crypto from "crypto";
  * amounts to a handful of endpoints (token exchange/refresh, files.get/
  * list/create, and the resumable upload initiate call).
  *
- * Scope used everywhere: https://www.googleapis.com/auth/drive.file — Study
- * Lamp can only see files it created or that the user explicitly picked via
- * the Google Picker (see src/components/drive/DrivePicker.tsx). This is a
- * "non-sensitive" scope under Google's OAuth verification rules, so it
- * avoids the security-assessment process the broader drive/drive.readonly
- * scopes require.
+ * Drive access stays limited to https://www.googleapis.com/auth/drive.file —
+ * Study Lamp can only see files it created or that the user explicitly picked
+ * via the Google Picker (see src/components/drive/DrivePicker.tsx). The
+ * userinfo.email scope is also requested so the callback can identify the
+ * connected Google account; it does not grant additional Drive access.
  *
  * Required env vars (server-only, never NEXT_PUBLIC_):
  *   GOOGLE_DRIVE_CLIENT_ID
@@ -25,7 +24,7 @@ import crypto from "crypto";
  *     Picker API — see https://console.cloud.google.com/apis/credentials)
  */
 
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -176,6 +175,9 @@ export async function getFileMetadata(accessToken: string, fileId: string): Prom
   const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${FILE_FIELDS}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  if (res.status === 404) {
+    throw new Error("Drive can't access that file. Pick it again using the connected Google account.");
+  }
   if (!res.ok) throw new Error(`Unable to read file metadata from Drive (${res.status}).`);
   return res.json();
 }

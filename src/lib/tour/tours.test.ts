@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { availableSteps, isTourOfferable } from "./dom";
-import { AUTO_RUN_MAX_ACCOUNT_AGE_MS, recordFor, shouldAutoRunWelcome, shouldOfferChip } from "./tourState";
+import { AUTO_RUN_MAX_ACCOUNT_AGE_MS, recordFor, resolveAccountCreatedAtMs, shouldAutoRunWelcome, shouldOfferChip } from "./tourState";
 import { TOUR_LIST, TOURS, allTourTargets, tourForPath } from "./tours";
 
 const SRC_ROOT = join(process.cwd(), "src");
@@ -134,5 +134,12 @@ describe("tour state", () => {
 
   it("never auto-runs when the account age is unknown", () => {
     assert.equal(shouldAutoRunWelcome({ records: {}, def, createdAtMs: 0, now }), false);
+  });
+
+  it("uses Firebase Auth creation time while a profile server timestamp is unresolved", () => {
+    const authCreatedAt = new Date(now - 24 * 3600 * 1000).toISOString();
+    assert.equal(resolveAccountCreatedAtMs({}, authCreatedAt), Date.parse(authCreatedAt));
+    assert.equal(resolveAccountCreatedAtMs({ toMillis: () => now - 2 * 24 * 3600 * 1000 }, authCreatedAt), now - 2 * 24 * 3600 * 1000);
+    assert.equal(resolveAccountCreatedAtMs(undefined, undefined), 0);
   });
 });

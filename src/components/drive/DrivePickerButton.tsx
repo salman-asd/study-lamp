@@ -66,8 +66,13 @@ export function DrivePickerButton({
   async function openPicker() {
     if (!user) return;
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY;
+    const appId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
     if (!apiKey) {
       toast.error("Google Drive picker isn't configured on this deployment (missing NEXT_PUBLIC_GOOGLE_PICKER_API_KEY).");
+      return;
+    }
+    if (!appId) {
+      toast.error("Google Drive picker isn't configured on this deployment (missing Firebase project number).");
       return;
     }
 
@@ -84,6 +89,7 @@ export function DrivePickerButton({
       views.push(new google.picker.DocsView(google.picker.ViewId.DOCS).setIncludeFolders(allowFolders).setSelectFolderEnabled(allowFolders));
 
       const picker = new google.picker.PickerBuilder()
+        .setAppId(appId)
         .setOAuthToken(accessToken)
         .setDeveloperKey(apiKey)
         .setTitle("Choose a video, document, or folder")

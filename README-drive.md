@@ -30,10 +30,12 @@ read via Node's built-in `zlib`).
      (add one per environment — localhost, preview, prod).
 3. Create an **API key**, restrict it to the Picker API only, and restrict
    it by HTTP referrer to your domain(s).
-4. OAuth consent screen: the app only ever requests the
-   `drive.file` scope, which Google classifies as non-sensitive — this
-   should not require the full security assessment broader Drive scopes
-   need. Verify this is still true before shipping (Google's rules change).
+4. OAuth consent screen: the app only requests the
+   `drive.file` Drive scope, which Google classifies as non-sensitive — this
+      should not require the full security assessment broader Drive scopes
+      need. The separate `userinfo.email` identity scope is used only to label
+      the connected account and does not grant additional Drive access. Verify
+      current Google requirements before shipping (they change).
 
 ## 3. Environment variables
 
@@ -52,6 +54,11 @@ Picker):
 NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID=<same value as GOOGLE_DRIVE_CLIENT_ID>
 NEXT_PUBLIC_GOOGLE_PICKER_API_KEY=<the restricted API key from step 2.3>
 ```
+
+Google Picker uses `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` as its project
+number. Keep the Firebase app, Google Drive API, Google Picker API, OAuth
+client, and Picker API key in the same Google Cloud project; Picker needs this
+project ID to grant `drive.file` access to files the user selects.
 
 ## 4. Deploy Firestore rules
 

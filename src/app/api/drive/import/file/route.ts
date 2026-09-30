@@ -61,6 +61,9 @@ export async function POST(req: NextRequest) {
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
+    if (err instanceof Error && err.message.startsWith("Drive can't access that file.")) {
+      return NextResponse.json({ error: err.message }, { status: 404 });
+    }
     console.error("Drive file import failed", err);
     return NextResponse.json({ error: "Couldn't import that file from Drive." }, { status: 502 });
   }
