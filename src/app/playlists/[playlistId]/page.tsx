@@ -194,7 +194,7 @@ function PersonalPlaylistEditorContent() {
     window.history.replaceState(null, "", url.pathname + url.search);
     if (wantsEdit) setDetailsOpen(true);
     if (wantsShare) void handleSharePlaylist();
-  }, [loading, playlist, searchParams]);
+  }, [loading, playlist, searchParams, handleSharePlaylist]);
 
   // Deep link from the Dashboard's "Add Video" button (?add=1) — opens the
   // Add Video dialog immediately instead of landing on a page with no
@@ -734,7 +734,7 @@ function PersonalPlaylistEditorContent() {
     }
   }
 
-  const handleSharePlaylist = async () => {
+  const handleSharePlaylist = React.useCallback(async () => {
     if (!user || !playlist) return;
     setShareBusy(true);
     try {
@@ -757,7 +757,7 @@ function PersonalPlaylistEditorContent() {
     } finally {
       setShareBusy(false);
     }
-  };
+  }, [playlist, user, videos]);
 
   const handleShareVisibilityChange = async (next: ShareVisibility) => {
     if (!user || !playlist) return;
