@@ -180,22 +180,6 @@ function PersonalPlaylistEditorContent() {
     return () => { cancelled = true; };
   }, [loading, playlist, videos, user, ownerId]);
 
-  // Deep links from the Playlists page card menu: ?edit=1 opens the details dialog, ?share=1 the share dialog.
-  const deepLinkHandled = React.useRef(false);
-  React.useEffect(() => {
-    if (loading || !playlist || deepLinkHandled.current) return;
-    const wantsEdit = searchParams.get("edit") === "1";
-    const wantsShare = searchParams.get("share") === "1";
-    if (!wantsEdit && !wantsShare) return;
-    deepLinkHandled.current = true;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("edit");
-    url.searchParams.delete("share");
-    window.history.replaceState(null, "", url.pathname + url.search);
-    if (wantsEdit) setDetailsOpen(true);
-    if (wantsShare) void handleSharePlaylist();
-  }, [loading, playlist, searchParams, handleSharePlaylist]);
-
   // Deep link from the Dashboard's "Add Video" button (?add=1) — opens the
   // Add Video dialog immediately instead of landing on a page with no
   // obvious next step.
@@ -758,6 +742,22 @@ function PersonalPlaylistEditorContent() {
       setShareBusy(false);
     }
   }, [playlist, user, videos]);
+
+  // Deep links from the Playlists page card menu: ?edit=1 opens the details dialog, ?share=1 the share dialog.
+  const deepLinkHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (loading || !playlist || deepLinkHandled.current) return;
+    const wantsEdit = searchParams.get("edit") === "1";
+    const wantsShare = searchParams.get("share") === "1";
+    if (!wantsEdit && !wantsShare) return;
+    deepLinkHandled.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("edit");
+    url.searchParams.delete("share");
+    window.history.replaceState(null, "", url.pathname + url.search);
+    if (wantsEdit) setDetailsOpen(true);
+    if (wantsShare) void handleSharePlaylist();
+  }, [loading, playlist, searchParams, handleSharePlaylist]);
 
   const handleShareVisibilityChange = async (next: ShareVisibility) => {
     if (!user || !playlist) return;
