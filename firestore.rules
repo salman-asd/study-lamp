@@ -40,7 +40,7 @@ service cloud.firestore {
     function isSeedAdminEmail() {
       return isSignedIn() &&
         request.auth.token.email_verified == true &&
-        request.auth.token.email.lower() in ['shofiq@gmail.com'];
+        request.auth.token.email.lower() in ['salmanshafiq00@gmail.com', 'shofiq.dev@gmail.com'];
     }
 
     // ── Shape/validation helpers ───────────────────────────────────────

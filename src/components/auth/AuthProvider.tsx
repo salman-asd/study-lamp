@@ -26,6 +26,7 @@ import type { UserProfile } from "@/types";
 interface AuthContextValue {
   user: User | null;
   profile: UserProfile | null;
+  profileError: string | null;
   loading: boolean;
   isAdmin: boolean;
   needsOnboarding: boolean;
@@ -85,6 +86,7 @@ const SEED_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_SEED_ADMIN_EMAILS || "")
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<User | null>(null);
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
+  const [profileError, setProfileError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   // login()/register()/resend briefly hold an unverified session. While one of those runs, the auth
   // listener must not sign the user out underneath it.
@@ -105,13 +107,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!fbUser) {
         setUser(null);
         setProfile(null);
+        setProfileError(null);
         setLoading(false);
         return;
       }
 
       try {
         const ref = doc(db, "users", fbUser.uid);
-        const snap = await getDoc(ref).catch(() => null);
+        const snap = await getDoc(ref);
 
         // Email-verification gate: a NEW account (no profile yet) must confirm its email before it
         // counts as signed in. We don't create a profile, categories or any data for it, and we treat
@@ -123,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setUser(fbUser);
-        if (!snap) throw new Error("Could not load profile");
+        setProfileError(null);
 
         if (!snap.exists()) {
           // First sign-in: create the profile document. Role is 'admin' only
@@ -160,7 +163,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         console.error("Failed to sync Firebase auth profile", error);
-        if (isMounted) setProfile(null);
+        if (isMounted) {
+          setUser(fbUser);
+          setProfile(null);
+          setProfileError((error as { code?: string })?.code || "profile-sync-failed");
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -292,6 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthContextValue = {
     user,
     profile,
+    profileError,
     loading,
     isAdmin: profile?.role === "admin",
     needsOnboarding,

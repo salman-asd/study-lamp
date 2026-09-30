@@ -1,199 +1,279 @@
-# Study Lamp — Student Learning Video Organizer
+# Study Lamp
 
-A learning video **organizer and progress tracker** for a small group of students.
-Videos are never uploaded here — every video is an external URL (YouTube or
-otherwise); the app only stores metadata, progress, notes, and organization.
+An accountability and learning layer on top of any video you're already
+watching — YouTube, Facebook, or your own personal library. Study Lamp adds
+goals, pace tracking, AI-generated summaries and quizzes, a guided roadmap,
+and Google Drive-backed video/document storage on top of a normal
+watch-and-take-notes workflow.
 
-Built with Next.js + TypeScript + Tailwind + shadcn-style UI, backed entirely by
-**Firebase Authentication + Cloud Firestore on the free Spark plan**, and deployed
-to **Netlify's free hosting**.
-
----
-
-## 1. What's included
-
-- Email/password auth (login, register, logout, password reset)
-- Two roles: `admin` and `student`, enforced by Firestore Security Rules
-- User-owned library (playlists → videos) private to each creator; admins can manage all content
-- Personal-per-user state: progress, favorites, watch later, priority, notes,
-  summaries, timestamp bookmarks, goals — never duplicated per video
-- Student pages: Home (filters + sort + search), Continue Learning, Playlists,
-  Watch Later, Priority, Favorites, Goals, Video page (player + tabs)
-- Admin pages: Dashboard (all users + stats), per-user detail (playlists,
-  watch later, priority, favorites, notes, history, goals — all editable),
-  playlist editor with **drag-and-drop reorder**, categories/tags manager,
-  JSON import, YouTube playlist import
-- Drag-and-drop reordering (dnd-kit) for playlist videos, Watch Later, and
-  Priority lists, persisted to Firestore
-- Transcript-backed AI summaries with Gemini, OpenAI, Anthropic, OpenRouter, or Groq connections
-- Light/dark/system theme (stored locally via `next-themes`)
-- Responsive layout: collapsible sidebar, 4/3/2/1-column video grid
-
-## 2. What's intentionally NOT included (per spec)
-
-No Firebase Storage, no Cloud Functions, no separate backend, no paid
-services of any kind. No video upload/hosting/transcoding. Quizzes, flashcards,
-spaced repetition, and PWA/offline support remain extension points.
+> Package name in `package.json` is currently `student-video-organizer`
+> (pre-rename) — this is the same app as "Study Lamp".
 
 ---
 
-## 3. Project structure
+## Table of contents
+
+- [Feature overview](#feature-overview)
+- [Tech stack](#tech-stack)
+- [Project structure](#project-structure)
+- [Getting started](#getting-started)
+- [Environment variables](#environment-variables)
+- [Firebase setup](#firebase-setup)
+- [Google Drive integration](#google-drive-integration)
+- [AI providers](#ai-providers)
+- [Testing](#testing)
+- [Admin accounts](#admin-accounts)
+- [Known limitations](#known-limitations)
+
+---
+
+## Feature overview
+
+**Core learning loop**
+- Add videos from YouTube, Facebook, or any direct/generic video URL into
+  shared (admin-curated) or personal playlists.
+- Per-video notes, a rich-text summary editor, timestamped bookmarks, and
+  watch progress/priority tracking.
+- Goals with pace tracking (`computeDailyPace`, `findGoalsBehindPace`) and
+  a roadmap view tying interests → curriculum steps → recommendations.
+- In-app notifications (bell icon) for pace and review reminders —
+  in-app only today, no push/email delivery.
+
+**AI tools** (bring-your-own API key, encrypted at rest)
+- Transcript-grounded video summaries and quizzes.
+- Universal transcript pipeline: official captions (YouTube) → a manually
+  pasted or `.srt`/`.vtt`-uploaded transcript → (reserved for future
+  automatic speech-to-text — not implemented yet).
+- Quizzes use a fixed question mix (recall / conceptual / application /
+  reasoning) and are cached per content-hash so they don't regenerate
+  until the source actually changes.
+- AI Connections settings page for managing provider API keys and model
+  selection, with quota-aware fallback across configured connections.
+
+**Google Drive**
+- Connect one or more Google accounts independently of your Study Lamp
+  login (`drive.file` scope only, via the Google Picker — avoids Google's
+  sensitive-scope review).
+- Import a single Drive video or an entire folder as a new personal
+  playlist, with AI-suggested (editable) categories.
+- Upload a new video straight to Drive from inside Study Lamp.
+- Secure playback: Drive files are streamed through a server-side proxy
+  (`/api/drive/stream/[fileId]`) that verifies ownership and forwards
+  `Range` requests — no Drive access tokens ever reach the browser.
+- Backup/restore your playlists, videos, notes, goals, and quiz attempts
+  to a "Study Lamp Backups" folder in your own Drive.
+
+**Study Materials**
+- Import PDF, Word (`.docx`), PowerPoint (`.pptx`), and Excel (`.xlsx`)
+  files from Drive and run the same AI summary/quiz pipeline against
+  their extracted text.
+- `.docx`/`.pptx`/`.xlsx` text is extracted by reading the OOXML zip
+  directly (no extra dependency); PDF extraction uses the `pdf-parse`
+  package.
+
+**Onboarding**
+- Onboarding (interest selection) is optional, not a forced gate — new
+  users land directly on the dashboard, with a dismissible
+  `InterestsBanner` prompting setup, and a driver.js-powered welcome tour
+  for first-time visits.
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| Language | TypeScript |
+| UI | Tailwind CSS, Radix UI primitives, `lucide-react` icons |
+| Rich text | Tiptap |
+| Drag & drop | `@dnd-kit` |
+| Auth & data | Firebase Auth + Firestore (client SDK), `firebase-admin` (server) |
+| Tours | `driver.js` |
+| Video | `react-youtube`, native `<video>` for Facebook/Drive/generic sources |
+| Transcripts | `youtube-transcript`, manual paste/upload for everything else |
+| Documents | `pdf-parse` (PDF), hand-rolled OOXML parsing (docx/pptx/xlsx) |
+| Notifications | `sonner` (toasts) + an in-app notification bell |
+
+Firestore security rules live in `firestore.rules` at the repo root and
+must be deployed (`firebase deploy --only firestore:rules`) whenever they
+change — the app will silently fail writes otherwise.
+
+---
+
+## Project structure
 
 ```
 src/
-  app/                  Next.js App Router pages (student + admin routes)
+  app/                    Next.js App Router pages + API routes
+    api/ai/                AI summary/quiz generation endpoints
+    api/drive/             Drive OAuth, import, upload, streaming, backup
+    api/documents/         Study Materials summary/quiz endpoints
+    dashboard/, goals/, roadmap/, library/, playlists/, video/, ...
+    settings/               AI Connections, Interests, Drive, account settings
+    study-materials/        PDF/Office document viewer + AI tools
   components/
-    ui/                 Small local shadcn-style primitives (button, card, ...)
-    layout/              Sidebar, Header, AppShell
-    auth/                AuthProvider, RequireAuth, RequireAdmin
-    video/                VideoCard, VideoGrid, VideoPlayer, VideoActionsBar...
-    filters/              FilterBar (home page filtering/sorting)
-    dnd/                  SortableList (dnd-kit wrapper used everywhere)
+    auth/                  AuthProvider, RequireAuth
+    dashboard/              MotivationBanner, InterestsBanner
+    video/                  VideoPlayer, SummaryPane, TranscriptInput, ...
+    drive/                  DrivePickerButton, DriveImportPanel
+    tour/                   TourProvider (driver.js wrapper)
   lib/
-    firebase.ts           Firebase client init (Auth + Firestore only)
-    firestore/             One module per collection (playlists, videos,
-                            userVideoState, notes, bookmarks, users, goals...)
-    filterSort.ts          Client-side filter/sort logic
-  hooks/                  useVideoLibrary, useDebouncedCallback
-  types/index.ts           Full data model + shared types
-scripts/importJson.ts     Optional CLI bulk-importer (Firebase Admin SDK)
-firestore.rules            Security rules implementing the permission model
-firestore.indexes.json
-netlify.toml
+    ai/                    Prompt builders, provider adapters, transcript resolution
+    server/                Server-only helpers (Drive, AI connection resolution, quiz)
+    firestore/             Client-side Firestore read/write helpers, one file per collection
+    tour/                   Tour definitions + auto-run eligibility logic
+  types/                   Shared TypeScript types (index.ts)
+firestore.rules            Security rules (source of truth — deploy after every change)
+firestore.indexes.json     Composite index definitions
 ```
 
 ---
 
-## 4. Data model (why it's shaped this way)
-
-```
-USER-OWNED (private to the creator; admins can manage all)
-  playlists/{playlistId}
-  playlists/{playlistId}/videos/{videoId}     ← order lives here
-
-PERSONAL (per user, never duplicates the video)
-  users/{uid}                                  profile + role + status + stats
-  users/{uid}/videoStates/{videoId}             progress, favorite, watchLater,
-                                                 priority (all independent!)
-  users/{uid}/notes/{videoId}                    private notes
-  users/{uid}/summaries/{videoId}                personal summary
-  users/{uid}/bookmarks/{videoId}/items/{id}      timestamp bookmarks
-  users/{uid}/goals/{goalId}
-
-  users/{uid}/categories/{id}                    per-user categories
-  tags/{id}                                      shared tags, admin-managed
-```
-
-A video is stored **once** per playlist, not once per student. Every
-student's progress, favorite, watch-later, and priority status is a small
-separate document under their own `users/{uid}/videoStates/{videoId}`. This
-is what keeps a 300-video library × 20 students well within Firestore's free
-read/write quota.
-
-## 5. Firestore free-tier optimizations applied
-
-- No per-video real-time `onSnapshot` listeners — data loads on page mount /
-  explicit refresh (`useVideoLibrary` hook), not continuously
-- Video progress is saved on **pause, page-leave, video-ended, and a 20s
-  interval while playing** — never every second (`VideoPlayer.tsx`)
-- Notes/summaries autosave with an 800–900ms debounce, not per keystroke
-  (`useDebouncedCallback`)
-- Drag-and-drop reorders write once per drop via a single Firestore
-  `writeBatch`, not one write per moved item
-- Admin dashboard reads a denormalized `users/{uid}.stats` snapshot
-  (recomputed on demand via the "Refresh stats" button) instead of fanning
-  out into every student's subcollections on every dashboard load
-- Theme preference and other UI-only state stay in `localStorage`
-  (via `next-themes`), never touching Firestore
-
----
-
-## 6. Firebase setup (Spark / free plan)
-
-1. Create a Firebase project at https://console.firebase.google.com — do
-   **not** upgrade to Blaze; everything here runs on Spark.
-2. **Authentication** → Sign-in method → enable **Email/Password**.
-3. **Firestore Database** → Create database → start in production mode.
-4. Deploy the security rules in `firestore.rules`:
-   ```bash
-   npm i -g firebase-tools
-   firebase login
-   firebase init firestore   # point it at this project, keep existing files
-   firebase deploy --only firestore:rules,firestore:indexes
-   ```
-5. Project settings → General → "Your apps" → add a **Web app** → copy the
-   config values into `.env.local` (see `.env.local.example`).
-6. Set `NEXT_PUBLIC_SEED_ADMIN_EMAILS` in `.env.local` to your own email
-   (comma-separated for multiple admins). The **first time** that email signs
-   up, its Firestore profile is created with `role: "admin"` automatically.
-   Anyone else who signs up becomes a `student`. You can promote/demote users
-   later by editing their `users/{uid}.role` field directly in the Firebase
-   console, or by having an existing admin do it from a future "manage roles"
-   action (the Firestore rules already allow admin-only role writes).
-
-### Optional: YouTube playlist import
-
-The "Import YouTube Playlist" admin page calls the free YouTube Data API v3.
-Get a key at https://console.cloud.google.com/apis/credentials (enable
-"YouTube Data API v3" — this stays within Google's free quota for normal use)
-and set `YOUTUBE_API_KEY` in your environment. Without it, admins can still
-import via the "Import JSON" page or by adding videos one at a time.
-
-### AI summaries
-
-Set `AI_CONNECTION_ENCRYPTION_KEY` to a base64-encoded 32-byte server-only key.
-Users add provider keys from Settings → AI Connections. Summary generation uses
-available YouTube captions only and does not download video files. If captions
-are unavailable, the UI reports that the transcript cannot be retrieved.
-OpenRouter models can be configured with a model such as
-`meta-llama/llama-3.1-8b-instruct:free`, subject to OpenRouter's current
-availability and limits. Groq models can be configured with a model such as
-`llama-3.3-70b-versatile`, subject to Groq's current free-tier limits. The speech-to-text toggle is stored as an opt-in
-preference; an audio transcription service must still be configured before it
-can process videos without captions.
-
----
-
-## 7. Local development
+## Getting started
 
 ```bash
 npm install
-cp .env.local.example .env.local   # fill in your Firebase config
+cp .env.local.example .env.local   # fill in the values below
 npm run dev
 ```
 
-Visit `http://localhost:3000`, register an account with your seed-admin
-email, and you'll land in the Admin Dashboard. Students can use **Playlists →
-New Playlist** to create private content. Admins can use **Admin → Playlists**
-(or **Import JSON** / **Import YouTube Playlist**) to manage any user's content.
+The app runs at `http://localhost:3000`.
 
-## 8. Deploying to Netlify (free tier)
-
-1. Push this repo to GitHub/GitLab/Bitbucket.
-2. In Netlify: **Add new site → Import an existing project**, pick the repo.
-3. Netlify auto-detects Next.js via `netlify.toml` (uses
-   `@netlify/plugin-nextjs`, installed automatically). Build command
-   `npm run build`, publish directory `.next` — already set in `netlify.toml`.
-4. Add the same environment variables from `.env.local` in
-   **Site settings → Environment variables** (including `YOUTUBE_API_KEY` if
-   you want that feature, and `NEXT_PUBLIC_SEED_ADMIN_EMAILS`).
-5. Deploy. Netlify's free tier comfortably covers a small student-group app
-   like this (the YouTube-import API route runs as a Netlify Function under
-   the hood, within the free invocation limits).
+```bash
+npm run build   # production build
+npm run start   # run the production build
+npm run lint    # eslint
+npm test        # project test suite (see Testing below)
+```
 
 ---
 
-## 9. Extending later
+## Environment variables
 
-The data model and types were written with these in mind, so they're additive:
+### Client-exposed (`NEXT_PUBLIC_*`)
 
-- **AI summaries/quizzes/flashcards** — add a new `users/{uid}/aiSummaries/{videoId}`
-  collection and a server API route; don't touch the personal `summaries`
-  collection, which stays student-authored.
-- **PWA/offline** — Firestore's local cache (already enabled in
-  `lib/firebase.ts`) is a natural starting point for offline reads.
-- **Learning paths / course builder** — could be modeled as an ordered list
-  of playlist IDs, reusing the same `SortableList` component.
+| Variable | Required | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | ✅ | Firebase Web app config |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | ✅ | |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | ✅ | Must match the project `firestore.rules` is deployed to |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | ✅ | |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | ✅ | |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | ✅ | |
+| `NEXT_PUBLIC_APP_URL` | ✅ | Base URL used for Drive OAuth redirect construction |
+| `NEXT_PUBLIC_SEED_ADMIN_EMAILS` | ✅ | Comma-separated emails allowed to bootstrap as `role: "admin"` on first signup. **Must exactly mirror** the `isSeedAdminEmail()` allowlist hardcoded in `firestore.rules` — the client and the security rule make this decision independently, and they will silently disagree if you only update one. |
+| `NEXT_PUBLIC_HAS_YT_KEY` | – | Feature-detection flag for YouTube API availability |
+| `NEXT_PUBLIC_FACEBOOK_APP_ID` | – | Only needed for Facebook video embedding/import |
+| `NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID` | – | Drive Picker OAuth client ID (browser-side) |
+| `NEXT_PUBLIC_GOOGLE_PICKER_API_KEY` | – | Google Picker API key |
 
-Keep new features behind the same shared-vs-personal split described in
-Section 4 — it's what keeps this affordable on Firebase's free plan.
+### Server-only
+
+| Variable | Required | Notes |
+|---|---|---|
+| `FIREBASE_PROJECT_ID` | ✅ | `firebase-admin` service account |
+| `FIREBASE_CLIENT_EMAIL` | ✅ | |
+| `FIREBASE_PRIVATE_KEY` | ✅ | Keep the `\n` escapes when pasting into `.env.local` |
+| `AI_CONNECTION_ENCRYPTION_KEY` | ✅ (for AI features) | AES-256 key encrypting stored AI provider API keys. Generate with `openssl rand -base64 32`. |
+| `GOOGLE_DRIVE_CLIENT_ID` / `GOOGLE_DRIVE_CLIENT_SECRET` | – (for Drive) | Server-side half of the Drive OAuth flow |
+| `GOOGLE_DRIVE_OAUTH_STATE_SECRET` | – (for Drive) | Signs the OAuth `state` parameter |
+| `YOUTUBE_API_KEY` | – | Server-side YouTube Data API lookups |
+| `FACEBOOK_PAGE_ACCESS_TOKEN` | – | Only if importing from a Facebook Page you manage |
+
+> **Bootstrapping the first admin:** set `NEXT_PUBLIC_SEED_ADMIN_EMAILS`,
+> add the same email to the `isSeedAdminEmail()` list in `firestore.rules`,
+> deploy the rules, restart the dev server, then sign up with that email.
+> If you skip the rules half of this, Firestore will silently reject the
+> admin profile write and **no user document will be created at all** —
+> this is the single most common setup mistake.
+
+---
+
+## Firebase setup
+
+1. Create a Firebase project and enable **Authentication** (Email/Password
+   is required; Google sign-in optional) and **Firestore**.
+2. Deploy security rules and indexes:
+   ```bash
+   firebase deploy --only firestore:rules,firestore:indexes
+   ```
+3. Generate a service account key for `firebase-admin` (used by API routes
+   that need elevated access — Drive import, document text extraction,
+   quiz caching) and populate the server-only Firebase variables above.
+4. Re-deploy `firestore.rules` any time it changes — a rule change with no
+   redeploy is indistinguishable from "it isn't working."
+
+---
+
+## Google Drive integration
+
+Drive support is split across Google Cloud Console setup and app config:
+
+1. In Google Cloud Console, enable the **Google Drive API** and configure
+   an OAuth consent screen requesting only the `drive.file` scope (this
+   keeps the app out of Google's sensitive-scope review).
+2. Create an OAuth client for the server-side flow
+   (`GOOGLE_DRIVE_CLIENT_ID`/`SECRET`) and, separately, a browser API key
+   for the Picker (`NEXT_PUBLIC_GOOGLE_PICKER_API_KEY`).
+3. Users connect their own Drive account from **Settings → Drive**
+   (`src/app/settings/drive/page.tsx`); connections are per-user and can
+   be a different Google account than the one they log into Study Lamp
+   with.
+4. Imported videos/documents are never copied off Drive — Study Lamp
+   streams and reads them on demand, and disconnecting or deleting a
+   Study Lamp record never touches the underlying Drive file.
+
+---
+
+## AI providers
+
+AI features (summaries, quizzes, document extraction → summary/quiz) are
+**bring-your-own-key**. A user adds one or more provider connections in
+**Settings → AI Connections**; keys are encrypted with
+`AI_CONNECTION_ENCRYPTION_KEY` before being stored in Firestore and are
+never sent back to the client in plaintext. If multiple connections are
+configured, generation falls back across them on transient failures
+(rate limits, timeouts, server errors) but not on errors that indicate a
+bad request or a genuinely bad key.
+
+---
+
+## Testing
+
+```bash
+npm test
+```
+
+Runs `scripts/runTests.mjs` over the project's `node:test`-based unit
+tests (colocated as `*.test.ts` next to the code they cover — e.g.
+`src/lib/ai/quiz.test.ts`, `src/lib/tour/tours.test.ts`,
+`src/lib/quizSource.test.ts`). These are pure-function/unit tests with no
+Firebase emulator dependency, so they run without any environment
+variables configured.
+
+---
+
+## Admin accounts
+
+Admin and non-admin users share every personal feature (notes, summaries,
+quizzes, goals, roadmap, Drive). Admin adds a management layer on top:
+curating shared playlists/videos and (eventually) a user list and
+analytics view. There is currently no in-app "promote to admin" action —
+admin status is only granted via the `NEXT_PUBLIC_SEED_ADMIN_EMAILS` /
+`isSeedAdminEmail()` bootstrap described above.
+
+---
+
+## Known limitations
+
+- **Speech-to-text is not implemented.** `src/lib/ai/audioTranscribe.ts`
+  exists as scaffolding (behind the `speechToTextEnabled` preference) but
+  currently always throws — videos with no captions need a manually
+  pasted or uploaded (`.srt`/`.vtt`) transcript.
+- **PDF extraction depends on `pdf-parse` actually being installed** — if
+  `npm install` hasn't pulled it in, PDF summary/quiz generation fails
+  with an explicit error rather than silently returning bad text.
+- Notifications are in-app (bell icon) only — no email or push delivery.
+- Admin's user-list/analytics view is not yet built; today admin only
+  manages shared playlist content.
