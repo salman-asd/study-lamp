@@ -11,6 +11,7 @@ import { VideoActionsBar } from "@/components/video/VideoActionsBar";
 import { PlaylistSidebar } from "@/components/video/PlaylistSidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
+import { TranscriptInput } from "@/components/video/TranscriptInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,6 +23,7 @@ import {
   setPersonalVideoWatched, togglePersonalVideoFavorite, togglePersonalVideoWatchLater,
 } from "@/lib/firestore/personalPlaylists";
 import { deleteNote, getNote, getSummary, saveNote, saveSummary } from "@/lib/firestore/notes";
+import { getTranscript, saveTranscript } from "@/lib/firestore/transcripts";
 import { addBookmark, listBookmarks, removeBookmark } from "@/lib/firestore/bookmarks";
 import { generateStarterSummary } from "@/lib/aiSummaryClient";
 import { generateVideoQuizForCurrentVideo } from "@/lib/quizClient";
@@ -67,6 +69,8 @@ function PersonalVideoContent() {
   const [bookmarkSaving, setBookmarkSaving] = React.useState(false);
   const [summary, setSummary] = React.useState("");
   const [generatingSummary, setGeneratingSummary] = React.useState(false);
+  const [transcript, setTranscript] = React.useState("");
+  const [transcriptSaving, setTranscriptSaving] = React.useState(false);
   const [quizQuestions, setQuizQuestions] = React.useState<QuizQuestion[]>([]);
   const [quizLoading, setQuizLoading] = React.useState(false);
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
@@ -105,12 +109,13 @@ function PersonalVideoContent() {
   const load = React.useCallback(async () => {
     if (!ownerId) return;
     setLoading(true);
-    const [v, vids, n, sm, pl] = await Promise.all([
+    const [v, vids, n, sm, pl, tr] = await Promise.all([
       getPersonalVideo(ownerId, playlistId, videoId),
       listPersonalVideos(ownerId, playlistId),
       getNote(ownerId, noteKey(videoId)),
       getSummary(ownerId, noteKey(videoId)),
       getPersonalPlaylist(ownerId, playlistId),
+      getTranscript(ownerId, noteKey(videoId)),
     ]);
     setVideo(v);
     setPlaylistVideos(vids);
@@ -118,10 +123,22 @@ function PersonalVideoContent() {
     setNote(n?.content || "");
     setSummary(sm?.content || "");
     setAutoPlay(!!pl?.autoPlay);
+    setTranscript(tr?.content || "");
     setLoading(false);
   }, [ownerId, playlistId, videoId]);
 
   React.useEffect(() => { load(); }, [load]);
+
+  async function handleSaveTranscript() {
+    if (!ownerId) return;
+    setTranscriptSaving(true);
+    try {
+      await saveTranscript(ownerId, noteKey(videoId), transcript);
+      toast.success(transcript.trim() ? "Transcript saved" : "Transcript cleared");
+    } finally {
+      setTranscriptSaving(false);
+    }
+  }
 
   const debouncedSaveSummary = useDebouncedCallback((val: string) => {
     if (ownerId) saveSummary(ownerId, noteKey(videoId), val);
@@ -162,6 +179,7 @@ function PersonalVideoContent() {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
         youtubeVideoId: video.youtubeVideoId || "",
+        manualTranscript: transcript,
         videoId,
         playlistId,
         ownerId: user.uid,
@@ -169,7 +187,6 @@ function PersonalVideoContent() {
         description: video.description || "",
         summary: summary || null,
       });
-      console.log(response)
       setQuizQuestions(response.questions || []);
       setSelectedAnswers({});
       setQuizSubmitted(false);
@@ -244,6 +261,7 @@ function PersonalVideoContent() {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
         youtubeVideoId: video.youtubeVideoId || "",
+        manualTranscript: transcript,
       });
       const draftHtml = toSummaryHtml(draft);
       setSummary(draftHtml);
@@ -377,6 +395,9 @@ function PersonalVideoContent() {
               <VideoPlayer
                 youtubeVideoId={video.youtubeVideoId}
                 videoUrl={video.videoUrl}
+                platform={video.platform}
+                driveFileId={video.driveFileId}
+                driveConnectionId={video.driveConnectionId}
                 startSeconds={video.status === "completed" ? 0 : video.currentPositionSeconds || 0}
                 autoPlay={autoPlayRequested}
                 className={sidebarOnRight ? "max-h-[72vh]" : undefined}
@@ -441,6 +462,7 @@ function PersonalVideoContent() {
             <Tabs defaultValue="summary">
               <TabsList data-tour="w-tabs">
                 <TabsTrigger value="summary">Summary</TabsTrigger>
+                {!video?.youtubeVideoId && !isViewingOther && <TabsTrigger value="transcript">Transcript</TabsTrigger>}
                 <TabsTrigger value="notes">Notes</TabsTrigger>
                 <TabsTrigger value="quiz">Quiz</TabsTrigger>
                 <TabsTrigger value="bookmarks">Bookmarks</TabsTrigger>
@@ -469,10 +491,23 @@ function PersonalVideoContent() {
                 />
                 {!isViewingOther && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    AI uses available YouTube captions to draft a summary, key points, and topics.
+                    AI uses this video&apos;s transcript (YouTube captions, or one you provide) to draft a summary,
+                    key points, and topics.
                   </p>
                 )}
               </TabsContent>
+
+              {!video?.youtubeVideoId && !isViewingOther && (
+                <TabsContent value="transcript">
+                  <TranscriptInput
+                    value={transcript}
+                    onChange={setTranscript}
+                    onSave={handleSaveTranscript}
+                    saving={transcriptSaving}
+                  />
+                </TabsContent>
+              )}
+
               <TabsContent value="notes">
                 <div className="space-y-3">
                   <Textarea

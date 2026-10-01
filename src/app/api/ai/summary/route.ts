@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoSummary, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
-import { getYouTubeTranscript, TranscriptUnavailableError } from "@/lib/ai/transcript";
+import { resolveTranscript } from "@/lib/ai/universalTranscript";
 import { getAiPreferences } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
+
+const TRANSCRIPT_MAX_LENGTH = 50000;
 
 const TITLE_MAX_LENGTH = 300;
 const DESCRIPTION_MAX_LENGTH = 5000;
@@ -24,7 +26,13 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 };
 
 // POST /api/ai/summary — generate a transcript-backed summary draft.
-// Body: { title, description?, youtubeVideoId }.
+// Body: { title, description?, youtubeVideoId?, manualTranscript? }.
+// Phase 4 (roadmap v3): youtubeVideoId is no longer the only way in — a
+// non-YouTube video can send its saved manualTranscript (from
+// users/{uid}/transcripts/{videoId} — see src/lib/firestore/transcripts.ts)
+// instead. resolveTranscript() tries YouTube captions first either way, so
+// passing a youtubeVideoId alongside a manualTranscript is fine and just
+// prefers the official captions.
 // Returns { summary: string }. Does NOT touch Firestore's summary
 // collection — the caller is responsible for putting the returned text into
 // the existing summary textarea/state and saving it via the existing
@@ -57,26 +65,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "description is too long." }, { status: 400 });
     }
   }
-  if (typeof b.youtubeVideoId !== "string" || !b.youtubeVideoId.trim()) {
-    return NextResponse.json({ error: "A YouTube video ID is required for transcript-based summaries." }, { status: 400 });
+  const youtubeVideoId = typeof b.youtubeVideoId === "string" ? b.youtubeVideoId.trim() : "";
+  const manualTranscript = typeof b.manualTranscript === "string" ? b.manualTranscript : "";
+  if (manualTranscript.length > TRANSCRIPT_MAX_LENGTH) {
+    return NextResponse.json({ error: "manualTranscript is too long." }, { status: 400 });
+  }
+  if (!youtubeVideoId && !manualTranscript.trim()) {
+    return NextResponse.json(
+      { error: "A YouTube video, or a pasted/uploaded transcript, is required for transcript-based summaries." },
+      { status: 400 }
+    );
   }
 
-  let transcript: string;
-  try {
-    transcript = await getYouTubeTranscript(b.youtubeVideoId.trim());
-  } catch (error) {
-    if (error instanceof TranscriptUnavailableError) {
-      const preferences = await getAiPreferences(uid).catch(() => ({ speechToTextEnabled: false }));
-      return NextResponse.json(
-        {
-          error: preferences.speechToTextEnabled
-            ? "No YouTube transcript is available. Speech-to-text fallback is enabled, but no transcription service is configured yet."
-            : "No YouTube transcript or captions are available. Enable speech-to-text fallback in AI Settings once a transcription service is configured.",
-        },
-        { status: 422 }
-      );
-    }
-    return NextResponse.json({ error: "Unable to retrieve the YouTube transcript." }, { status: 502 });
+  const transcript = await resolveTranscript({ youtubeVideoId, manualTranscript });
+  if (!transcript) {
+    const preferences = await getAiPreferences(uid).catch(() => ({ speechToTextEnabled: false }));
+    return NextResponse.json(
+      {
+        error: preferences.speechToTextEnabled
+          ? "No transcript is available. Speech-to-text fallback is enabled, but no transcription service is configured yet."
+          : "No transcript or captions are available. Paste or upload a transcript for this video, or enable speech-to-text fallback in AI Settings once a transcription service is configured.",
+      },
+      { status: 422 }
+    );
   }
 
   try {

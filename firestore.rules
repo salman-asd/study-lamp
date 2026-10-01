@@ -28,6 +28,21 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
     }
 
+    // Bootstraps the very first admin account without needing a Cloud
+    // Function to mint it server-side. This list MUST be kept in sync by
+    // hand with the NEXT_PUBLIC_SEED_ADMIN_EMAILS env var read in
+    // src/components/auth/AuthProvider.tsx — that's the only other place
+    // this decision is made. Emails are matched lowercase; a bare email
+    // string here does not grant anything by itself, it only allows THAT
+    // signed-in, verified account to create its own profile with
+    // role == 'admin' the first time (create only — see /users rules).
+    // Add/remove an email here whenever you change the env var.
+    function isSeedAdminEmail() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email.lower() in ['salmanshafiq00@gmail.com', 'shofiq.dev@gmail.com'];
+    }
+
     // ── Shape/validation helpers ───────────────────────────────────────
     // These validate "IF the field is present in the resulting document,
     // it must be well-formed" rather than "the field must always be
@@ -95,7 +110,8 @@ service cloud.firestore {
       // brand-new email/password sign-up cannot start using the app before confirming its address.
       allow create: if isSelf(uid) &&
         request.auth.token.email_verified == true &&
-        request.resource.data.role == 'student' &&
+        (request.resource.data.role == 'student' ||
+          (request.resource.data.role == 'admin' && isSeedAdminEmail())) &&
         request.resource.data.status in ['active', 'disabled'];
       // Users may update their own profile EXCEPT role/status (privilege
       // escalation guard). Admins may update anything on any profile.
@@ -134,6 +150,17 @@ service cloud.firestore {
         allow delete: if isSelf(uid) || isAdmin();
       }
       match /summaries/{videoId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow create, update: if (isSelf(uid) || isAdmin()) &&
+          request.resource.data.content is string &&
+          request.resource.data.content.size() <= 50000;
+        allow delete: if isSelf(uid) || isAdmin();
+      }
+
+      // Manually pasted/uploaded transcripts (Phase 4 — universal
+      // transcript input for non-YouTube videos). Same per-user, per-video
+      // shape and size guard as notes/summaries above.
+      match /transcripts/{videoId} {
         allow read: if isSelf(uid) || isAdmin();
         allow create, update: if (isSelf(uid) || isAdmin()) &&
           request.resource.data.content is string &&
@@ -243,7 +270,9 @@ service cloud.firestore {
             optionalBool(request.resource.data, 'isWatchLater') &&
             optionalNullableEnum(request.resource.data, 'priority', ['high', 'medium', 'low']) &&
             optionalNumberInRange(request.resource.data, 'order', 0, 1000000) &&
-            optionalString(request.resource.data, 'categoryId', 200);
+            optionalString(request.resource.data, 'categoryId', 200) &&
+            optionalString(request.resource.data, 'driveFileId', 200) &&
+            optionalString(request.resource.data, 'driveConnectionId', 200);
         }
       }
 
@@ -282,6 +311,36 @@ service cloud.firestore {
       match /aiQuota/{quotaId} {
         allow read: if isSelf(uid) || isAdmin();
         allow write: if false;
+      }
+
+      // Google Drive OAuth connections (encrypted refresh tokens). Denied to
+      // the client SDK entirely, same reasoning as aiConnections above — all
+      // access goes through /api/drive/* routes using the Admin SDK. See
+      // src/lib/server/driveConnections.ts.
+      match /driveConnections/{connectionId} {
+        allow read, write: if false;
+      }
+
+      // Study Materials (PDFs / Office docs) — Phase 18-19. The file bytes
+      // live in Drive; this doc is just metadata + provenance, so the same
+      // owner-or-admin + size-guard pattern as personalPlaylists applies.
+      match /personalDocuments/{documentId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow write: if (isSelf(uid) || isAdmin()) &&
+          optionalString(request.resource.data, 'title', 300) &&
+          optionalEnum(request.resource.data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
+          optionalString(request.resource.data, 'mimeType', 200) &&
+          optionalString(request.resource.data, 'driveFileId', 200) &&
+          optionalString(request.resource.data, 'driveConnectionId', 200) &&
+          optionalString(request.resource.data, 'categoryId', 200) &&
+          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000);
+
+        // AI-generated quiz cache, same shape/rules as a video's — written
+        // only by server-side Admin SDK code (see src/lib/server/quiz.ts).
+        match /quiz/{quizDoc} {
+          allow read: if isSelf(uid) || isAdmin();
+          allow write: if false;
+        }
       }
     }
 

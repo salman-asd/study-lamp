@@ -29,7 +29,7 @@ import type { FieldValue, Timestamp } from "firebase/firestore";
  */
 
 export type Role = "admin" | "student";
-export type VideoPlatform = "youtube" | "youtube-shorts" | "facebook" | "vimeo" | "generic";
+export type VideoPlatform = "youtube" | "youtube-shorts" | "facebook" | "vimeo" | "generic" | "google_drive";
 export type ShareVisibility = "private" | "unlisted" | "public";
 
 export const VIDEO_PLATFORMS: VideoPlatform[] = [
@@ -38,6 +38,7 @@ export const VIDEO_PLATFORMS: VideoPlatform[] = [
   "facebook",
   "vimeo",
   "generic",
+  "google_drive",
 ];
 
 export const SHARE_VISIBILITIES: ShareVisibility[] = ["private", "unlisted", "public"];
@@ -150,6 +151,11 @@ export interface UserProfile {
    *  meaningful events only (not on every keystroke) so the admin table
    *  can render without fanning out reads across every student. */
   stats?: UserStatsSnapshot;
+  /** Phase 1 (roadmap v3): set true when the user picks "Don't ask again"
+   *  on the dashboard's InterestsBanner. Onboarding is no longer a forced
+   *  gate, so this is the only thing standing between an empty-interests
+   *  profile and the banner showing again on a future visit. */
+  interestsBannerDismissed?: boolean;
 }
 
 export interface UserStatsSnapshot {
@@ -298,6 +304,16 @@ export interface VideoNote {
 }
 
 export interface VideoSummary {
+  videoId: string;
+  content: string;
+  updatedAt: Timestamp | null;
+}
+
+/** Phase 4 (roadmap v3) — a manually pasted or uploaded (.srt/.vtt)
+ *  transcript, stored per-user/per-video the same way notes/summaries are.
+ *  Used as a fallback source for any video with no official captions
+ *  (see src/lib/ai/universalTranscript.ts). */
+export interface VideoTranscript {
   videoId: string;
   content: string;
   updatedAt: Timestamp | null;
@@ -474,8 +490,87 @@ export interface PersonalVideo {
   /** Manual order used within Watch Later / Priority lists (drag & drop), mirrors UserVideoState. */
   watchLaterOrder?: number | null;
   priorityOrder?: number | null;
+  /** Set only when platform === "google_drive" (Phase 14/16). The video's
+   *  bytes live in Google Drive, not at videoUrl — playback goes through
+   *  the ownership-checked proxy at /api/drive/stream/[fileId], never a
+   *  direct Drive URL or token in the browser. driveConnectionId records
+   *  which of the owner's linked Google accounts holds the file, since a
+   *  user may connect more than one (Phase 13). */
+  driveFileId?: string | null;
+  driveConnectionId?: string | null;
   lastWatchedAt: Timestamp | null;
   completedAt: Timestamp | null;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * GOOGLE DRIVE (Phases 13-17)
+ * ─────────────────────────────────────────────────────────────────────────
+ * A user can link one or more Google accounts (independent of their Study
+ * Lamp login email) via OAuth, using the narrow `drive.file` scope — Study
+ * Lamp can only see files the user explicitly picks via the Google Picker
+ * or uploads itself, never their whole Drive. This avoids Google's
+ * sensitive-scope security review that the broader `drive.readonly`/`drive`
+ * scopes require.
+ *
+ * Stored at users/{uid}/driveConnections/{connectionId}. Like AiConnection,
+ * this is denied to the client SDK entirely (see firestore.rules) — every
+ * read/write goes through the authenticated /api/drive/* routes using the
+ * Admin SDK, and the refresh token is encrypted at rest with the same
+ * AES-256-GCM helper used for AI provider keys (src/lib/server/aiEncryption.ts).
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export type DriveConnectionStatus = "active" | "invalid";
+
+export interface DriveConnection {
+  id: string;
+  googleEmail: string;
+  encryptedRefreshToken: string; // server-only, never sent to the client
+  scope: string;
+  status: DriveConnectionStatus;
+  createdAt: FirestoreTimeValue;
+  updatedAt: FirestoreTimeValue;
+  lastUsedAt: FirestoreTimeValue | null;
+}
+
+/** Safe-to-return projection of a DriveConnection — no token, ever. */
+export interface DriveConnectionSummary {
+  id: string;
+  googleEmail: string;
+  status: DriveConnectionStatus;
+  createdAt: string | null;
+  lastUsedAt: string | null;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * STUDY MATERIALS (Phases 18-19) — PDFs and Office documents
+ * ─────────────────────────────────────────────────────────────────────────
+ * A document a student imports from Drive or uploads directly. Lives at
+ * users/{uid}/personalDocuments/{id}. The file bytes always live in Google
+ * Drive (driveFileId/driveConnectionId) — Study Lamp never stores the raw
+ * file itself, matching the video pipeline in Phase 13-16. Notes and AI
+ * summaries reuse the existing users/{uid}/notes and /summaries
+ * collections with a "d_" id prefix (see src/lib/firestore/notes.ts),
+ * the same convention personal videos already use with "p_".
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export type DocumentFileType = "pdf" | "docx" | "pptx" | "xlsx";
+export const DOCUMENT_FILE_TYPES: DocumentFileType[] = ["pdf", "docx", "pptx", "xlsx"];
+
+export interface PersonalDocument {
+  id: string;
+  ownerId: string;
+  title: string;
+  fileType: DocumentFileType;
+  mimeType: string;
+  sizeBytes?: number | null;
+  driveFileId: string;
+  driveConnectionId: string;
+  categoryId?: string | null;
+  tagIds?: string[];
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }

@@ -15,7 +15,7 @@ import { toast } from "sonner";
 type Mode = "login" | "register" | "reset" | "verify";
 
 export default function LoginPage() {
-  const { user, loading, profile, needsOnboarding, login, loginWithGoogle, register, resetPassword, resendVerification } = useAuth();
+  const { user, loading, login, loginWithGoogle, register, resetPassword, resendVerification } = useAuth();
   const router = useRouter();
   const [mode, setMode] = React.useState<Mode>("login");
   const [email, setEmail] = React.useState("");
@@ -44,11 +44,13 @@ export default function LoginPage() {
     }
   }, []);
 
+  // Phase 1 (roadmap v3): onboarding is no longer a forced gate — every
+  // signed-in user, new or returning, lands on the dashboard.
   React.useEffect(() => {
     if (!loading && user) {
-      router.replace(needsOnboarding || !profile ? "/onboarding" : "/dashboard");
+      router.replace("/dashboard");
     }
-  }, [loading, user, profile, needsOnboarding, router]);
+  }, [loading, user, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

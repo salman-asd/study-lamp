@@ -1,13 +1,6 @@
 {
   "indexes": [
     {
-      "collectionGroup": "videos",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "order", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "videoStates",
       "queryScope": "COLLECTION",
       "fields": [
@@ -55,7 +48,30 @@
         { "fieldPath": "isActive", "order": "ASCENDING" },
         { "fieldPath": "priority", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "videos",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "driveConnectionId", "order": "ASCENDING" },
+        { "fieldPath": "driveFileId", "order": "ASCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "videos",
+      "fieldPath": "driveConnectionId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "videos",
+      "fieldPath": "driveFileId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
 }

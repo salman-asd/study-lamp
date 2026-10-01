@@ -11,7 +11,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { db } from "@/lib/firebase";
 import { trackLearningEvent } from "@/lib/analytics";
 import { availableSteps, isDialogOpen, isMobileViewport, isTourOfferable, prefersReducedMotion, visibleTourEl } from "@/lib/tour/dom";
-import { readMirror, recordFor, shouldAutoRunWelcome, writeMirror } from "@/lib/tour/tourState";
+import { readMirror, recordFor, resolveAccountCreatedAtMs, shouldAutoRunWelcome, writeMirror } from "@/lib/tour/tourState";
 import { TOURS, TOUR_LIST } from "@/lib/tour/tours";
 import type { TourDef, TourId, TourRecordLike, TourStatus } from "@/lib/tour/types";
 
@@ -34,11 +34,6 @@ export function useTour(): TourContextValue {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function toMillis(value: unknown): number {
-  const v = value as { toMillis?: () => number } | undefined;
-  return typeof v?.toMillis === "function" ? v.toMillis() : 0;
-}
 
 /** Waits until the first anchored, non-drawer step is on screen (pages render data asynchronously). */
 async function waitForAnchors(def: TourDef, timeoutMs = 2000): Promise<boolean> {
@@ -232,7 +227,8 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Welcome tour: auto-runs once for new accounts that finished onboarding, on the dashboard.
+  // Welcome tour: auto-runs once for new accounts, on the dashboard (see
+  // shouldAutoRunWelcome — Phase 1 dropped the onboardingCompletedAt gate).
   React.useEffect(() => {
     if (!user || !profile || pathname !== "/dashboard") return;
     if (new URLSearchParams(window.location.search).has("notour")) return;
@@ -241,8 +237,7 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     const ok = shouldAutoRunWelcome({
       records,
       def,
-      createdAtMs: toMillis(profile.createdAt),
-      onboardingDone: !!profile.onboardingCompletedAt,
+      createdAtMs: resolveAccountCreatedAtMs(profile.createdAt, user.metadata.creationTime),
       now: Date.now(),
     });
     if (!ok) return;
