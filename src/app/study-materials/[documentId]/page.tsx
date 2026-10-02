@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryPane } from "@/components/video/SummaryPane";
 import { getPersonalDocumentClient } from "@/lib/firestore/personalDocuments";
 import { getSummary, saveSummary } from "@/lib/firestore/notes";
-import { driveStreamUrl } from "@/lib/driveClient";
+import { getSignedDriveUrls } from "@/lib/driveClient";
 import type { PersonalDocument, QuizQuestion } from "@/types";
 import { Download, ExternalLink, Sparkles, ListChecks } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +36,7 @@ function StudyMaterialDetailContent() {
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
   const [quizSubmitted, setQuizSubmitted] = React.useState(false);
   const [quizResult, setQuizResult] = React.useState<{ score: number; total: number } | null>(null);
+  const [signedStreamUrl, setSignedStreamUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     (async () => {
@@ -55,6 +56,26 @@ function StudyMaterialDetailContent() {
       }
     })();
   }, [user, documentId]);
+
+  React.useEffect(() => {
+    let active = true;
+    setSignedStreamUrl(null);
+    if (!user || !doc || doc.fileType !== "pdf") return () => { active = false; };
+    void (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const [url] = await getSignedDriveUrls(idToken, user.uid, [{
+          fileId: doc.driveFileId,
+          connectionId: doc.driveConnectionId,
+          purpose: "stream",
+        }]);
+        if (active) setSignedStreamUrl(url);
+      } catch {
+        if (active) toast.error("Couldn't prepare the document preview.");
+      }
+    })();
+    return () => { active = false; };
+  }, [user, doc]);
 
   async function handleSummaryBlur() {
     if (!user || !documentId) return;
@@ -138,6 +159,21 @@ function StudyMaterialDetailContent() {
     }
   }
 
+  async function handleDownload() {
+    if (!user || !doc) return;
+    try {
+      const idToken = await user.getIdToken();
+      const [url] = await getSignedDriveUrls(idToken, user.uid, [{
+        fileId: doc.driveFileId,
+        connectionId: doc.driveConnectionId,
+        purpose: "download",
+      }]);
+      window.location.href = url;
+    } catch {
+      toast.error("Couldn't prepare the download.");
+    }
+  }
+
   if (loading) {
     return <AppShell><div className="mx-auto max-w-4xl space-y-4"><Skeleton className="h-8 w-1/2" /><Skeleton className="h-[500px] w-full" /></div></AppShell>;
   }
@@ -146,8 +182,6 @@ function StudyMaterialDetailContent() {
     return <AppShell><div className="mx-auto max-w-4xl"><p className="text-muted-foreground">Document not found.</p></div></AppShell>;
   }
 
-  const streamUrl = driveStreamUrl(doc.driveFileId, doc.driveConnectionId);
-  const downloadUrl = driveStreamUrl(doc.driveFileId, doc.driveConnectionId, true);
   const driveViewUrl = `https://drive.google.com/file/d/${doc.driveFileId}/view`;
 
   return (
@@ -156,7 +190,7 @@ function StudyMaterialDetailContent() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="font-display text-2xl font-semibold">{doc.title}</h1>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={async () => { const idToken = await user!.getIdToken(); window.location.href = `${downloadUrl}&idToken=${encodeURIComponent(idToken)}`; }}>
+            <Button variant="outline" size="sm" onClick={handleDownload}>
               <Download className="mr-1.5 h-4 w-4" />Download
             </Button>
             <Button asChild variant="outline" size="sm"><a href={driveViewUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" />Open in Drive</a></Button>
@@ -165,7 +199,7 @@ function StudyMaterialDetailContent() {
 
         <Card>
           <CardContent className="p-0">
-            <DocumentPreview document={doc} streamUrl={streamUrl} driveViewUrl={driveViewUrl} />
+            <DocumentPreview document={doc} streamUrl={signedStreamUrl} driveViewUrl={driveViewUrl} />
           </CardContent>
         </Card>
 
@@ -248,20 +282,10 @@ function StudyMaterialDetailContent() {
  * (normally true, since it's usually their own upload/import), and
  * deliberately never carries our proxy URL or any token into that iframe.
  */
-function DocumentPreview({ document, streamUrl, driveViewUrl }: { document: PersonalDocument; streamUrl: string; driveViewUrl: string }) {
-  const { user } = useAuth();
-  const [authedStreamUrl, setAuthedStreamUrl] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    let active = true;
-    if (document.fileType !== "pdf" || !user) return;
-    user.getIdToken().then((idToken) => { if (active) setAuthedStreamUrl(`${streamUrl}&idToken=${encodeURIComponent(idToken)}`); });
-    return () => { active = false; };
-  }, [document.fileType, streamUrl, user]);
-
+function DocumentPreview({ document, streamUrl, driveViewUrl }: { document: PersonalDocument; streamUrl: string | null; driveViewUrl: string }) {
   if (document.fileType === "pdf") {
-    if (!authedStreamUrl) return <div className="flex h-[70vh] w-full items-center justify-center text-sm text-muted-foreground">Loading preview…</div>;
-    return <iframe src={authedStreamUrl} title={document.title} className="h-[70vh] w-full rounded-b-lg border-0" />;
+    if (!streamUrl) return <div className="flex h-[70vh] w-full items-center justify-center text-sm text-muted-foreground">Loading preview…</div>;
+    return <iframe src={streamUrl} title={document.title} className="h-[70vh] w-full rounded-b-lg border-0" />;
   }
   return (
     <iframe

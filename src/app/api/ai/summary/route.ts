@@ -37,6 +37,8 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // collection — the caller is responsible for putting the returned text into
 // the existing summary textarea/state and saving it via the existing
 // save/autosave path (see src/app/video/[videoId]/page.tsx).
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

@@ -65,6 +65,7 @@ export interface DriveVideoInput {
   durationSeconds?: number;
   driveFileId: string;
   driveConnectionId: string;
+  thumbnailData?: string | null;
 }
 
 /** Adds one Drive-backed video to a playlist. Dedupes on driveFileId (a
@@ -81,6 +82,8 @@ export async function addDriveVideoAdmin(ownerId: string, playlistId: string, vi
     title: video.title,
     videoUrl: video.videoUrl,
     thumbnailUrl: video.thumbnailUrl,
+    thumbnailData: video.thumbnailData ?? null,
+    thumbnailAttemptedAt: video.thumbnailData ? admin.firestore.FieldValue.serverTimestamp() : null,
     durationSeconds: video.durationSeconds ?? 0,
     platform: "google_drive",
     driveFileId: video.driveFileId,
@@ -132,6 +135,7 @@ export interface DriveDocumentInput {
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;
+  thumbnailData?: string | null;
 }
 
 export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentInput): Promise<string> {
@@ -148,6 +152,8 @@ export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentI
     sizeBytes: doc.sizeBytes ?? null,
     driveFileId: doc.driveFileId,
     driveConnectionId: doc.driveConnectionId,
+    thumbnailData: doc.thumbnailData ?? null,
+    thumbnailAttemptedAt: doc.thumbnailData ? admin.firestore.FieldValue.serverTimestamp() : null,
     categoryId: null,
     tagIds: [],
     createdAt: now,

@@ -54,6 +54,121 @@ export interface DriveImportResult {
   documentId?: string;
 }
 
+export type DriveSignedUrlPurpose = "stream" | "download" | "thumb";
+
+export interface DriveSignedUrlItem {
+  fileId: string;
+  connectionId: string;
+  purpose: DriveSignedUrlPurpose;
+}
+
+interface CachedSignedUrl {
+  url: string;
+  exp: number;
+}
+
+interface PendingSignedUrl extends DriveSignedUrlItem {
+  uid: string;
+  idToken: string;
+  resolve: (url: string) => void;
+  reject: (error: Error) => void;
+}
+
+const signedUrlCache = new Map<string, CachedSignedUrl>();
+const pendingSignedUrls: PendingSignedUrl[] = [];
+const SIGNED_URL_REFRESH_BUFFER_MS = 5 * 60_000;
+const SIGNED_URL_CACHE_MAX_ENTRIES = 500;
+let signFlushQueued = false;
+
+function signedUrlCacheKey(uid: string, item: DriveSignedUrlItem): string {
+  return `${uid}:${item.purpose}:${item.connectionId}:${item.fileId}`;
+}
+
+function queueSignedUrl(item: DriveSignedUrlItem, uid: string, idToken: string): Promise<string> {
+  const key = signedUrlCacheKey(uid, item);
+  const cached = signedUrlCache.get(key);
+  if (cached && cached.exp * 1000 - SIGNED_URL_REFRESH_BUFFER_MS > Date.now()) {
+    signedUrlCache.delete(key);
+    signedUrlCache.set(key, cached);
+    return Promise.resolve(cached.url);
+  }
+
+  return new Promise((resolve, reject) => {
+    pendingSignedUrls.push({ ...item, uid, idToken, resolve, reject });
+    if (!signFlushQueued) {
+      signFlushQueued = true;
+      queueMicrotask(() => { void flushSignedUrlQueue(); });
+    }
+  });
+}
+
+async function flushSignedUrlQueue(): Promise<void> {
+  signFlushQueued = false;
+  const batch = pendingSignedUrls.splice(0, 50);
+  const byUser = new Map<string, PendingSignedUrl[]>();
+  for (const entry of batch) {
+    const entries = byUser.get(entry.uid) || [];
+    entries.push(entry);
+    byUser.set(entry.uid, entries);
+  }
+
+  await Promise.all(Array.from(byUser.values(), async (entries) => {
+    const first = entries[0];
+    try {
+      const res = await fetch("/api/drive/sign", {
+        method: "POST",
+        headers: authHeaders(first.idToken, true),
+        body: JSON.stringify({ items: entries.map(({ fileId, connectionId, purpose }) => ({ fileId, connectionId, purpose })) }),
+      });
+      const data = await parseOrThrow(res);
+      if (!Array.isArray(data.urls) || data.urls.length !== entries.length) {
+        throw new Error("Google Drive returned an incomplete signed URL response.");
+      }
+
+      for (let index = 0; index < entries.length; index++) {
+        const signed = data.urls[index] as { url?: unknown; exp?: unknown };
+        if (typeof signed.url !== "string" || typeof signed.exp !== "number") {
+          throw new Error("Google Drive returned an invalid signed URL.");
+        }
+        const entry = entries[index];
+        const key = signedUrlCacheKey(entry.uid, entry);
+        signedUrlCache.delete(key);
+        signedUrlCache.set(key, { url: signed.url, exp: signed.exp });
+        while (signedUrlCache.size > SIGNED_URL_CACHE_MAX_ENTRIES) {
+          const oldestKey = signedUrlCache.keys().next().value;
+          if (oldestKey === undefined) break;
+          signedUrlCache.delete(oldestKey);
+        }
+        entry.resolve(signed.url);
+      }
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error("Couldn't prepare a Drive URL.");
+      entries.forEach((entry) => entry.reject(normalized));
+    }
+  }));
+
+  if (pendingSignedUrls.length && !signFlushQueued) {
+    signFlushQueued = true;
+    queueMicrotask(() => { void flushSignedUrlQueue(); });
+  }
+}
+
+export async function getSignedDriveUrls(
+  idToken: string,
+  uid: string,
+  items: DriveSignedUrlItem[],
+): Promise<string[]> {
+  return Promise.all(items.map((item) => queueSignedUrl(item, uid, idToken)));
+}
+
+export async function backfillDriveThumbnails(idToken: string): Promise<{ processed: number; remaining: number }> {
+  const res = await fetch("/api/drive/thumbnails/backfill", {
+    method: "POST",
+    headers: authHeaders(idToken),
+  });
+  return parseOrThrow(res);
+}
+
 export async function importDriveFile(
   idToken: string,
   input: { connectionId: string; fileId: string; playlistId?: string }
@@ -80,7 +195,7 @@ export async function importDriveFolder(
 
 export async function startDriveUploadSession(
   idToken: string,
-  input: { connectionId: string; name: string; mimeType: string }
+  input: { connectionId: string; name: string; mimeType: string; sizeBytes: number }
 ): Promise<string> {
   const res = await fetch("/api/drive/upload/session", {
     method: "POST",
@@ -117,14 +232,6 @@ export function uploadFileToDrive(uploadUrl: string, file: File, onProgress?: (p
     xhr.onerror = () => reject(new Error("Upload to Drive failed (network error)."));
     xhr.send(file);
   });
-}
-
-export function driveStreamUrl(fileId: string, connectionId: string, download = false): string {
-  return `/api/drive/stream/${fileId}?connectionId=${encodeURIComponent(connectionId)}${download ? "&download=1" : ""}`;
-}
-
-export function driveThumbnailUrl(fileId: string, connectionId: string): string {
-  return `/api/drive/thumbnail/${fileId}?connectionId=${encodeURIComponent(connectionId)}`;
 }
 
 export interface BackupSummary {

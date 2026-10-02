@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { getAiPreferences, updateAiPreferences } from "@/lib/server/aiPreferences";
 
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

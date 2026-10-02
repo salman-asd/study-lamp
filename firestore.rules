@@ -82,6 +82,11 @@ service cloud.firestore {
       return !(key in data) || data[key] == null || data[key] is timestamp;
     }
 
+    function sameDriveReferences() {
+      return request.resource.data.get('driveFileId', null) == resource.data.get('driveFileId', null) &&
+        request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null);
+    }
+
     // ── Sharing state helpers ───────────────────────────────────────────
     function isShareRevoked(data) {
       return ('revokedAt' in data) && data.revokedAt != null;
@@ -262,7 +267,7 @@ service cloud.firestore {
 
         match /videos/{videoId} {
           allow read: if isSelf(uid) || isAdmin();
-          allow write: if (isSelf(uid) || isAdmin()) &&
+          allow create, delete: if (isSelf(uid) || isAdmin()) &&
             optionalString(request.resource.data, 'title', 500) &&
             optionalEnum(request.resource.data, 'status', ['not_started', 'in_progress', 'completed']) &&
             optionalNumberInRange(request.resource.data, 'watchedPercentage', 0, 100) &&
@@ -273,7 +278,27 @@ service cloud.firestore {
             optionalNumberInRange(request.resource.data, 'order', 0, 1000000) &&
             optionalString(request.resource.data, 'categoryId', 200) &&
             optionalString(request.resource.data, 'driveFileId', 200) &&
-            optionalString(request.resource.data, 'driveConnectionId', 200);
+            optionalString(request.resource.data, 'driveConnectionId', 200) &&
+            optionalString(request.resource.data, 'thumbnailData', 40960);
+
+          allow update: if (isSelf(uid) || isAdmin()) && sameDriveReferences() &&
+            optionalString(request.resource.data, 'title', 500) &&
+            optionalEnum(request.resource.data, 'status', ['not_started', 'in_progress', 'completed']) &&
+            optionalNumberInRange(request.resource.data, 'watchedPercentage', 0, 100) &&
+            optionalNumberInRange(request.resource.data, 'currentPositionSeconds', 0, 1000000000) &&
+            optionalBool(request.resource.data, 'isFavorite') &&
+            optionalBool(request.resource.data, 'isWatchLater') &&
+            optionalNullableEnum(request.resource.data, 'priority', ['high', 'medium', 'low']) &&
+            optionalNumberInRange(request.resource.data, 'order', 0, 1000000) &&
+            optionalString(request.resource.data, 'categoryId', 200) &&
+            optionalString(request.resource.data, 'driveFileId', 200) &&
+            optionalString(request.resource.data, 'driveConnectionId', 200) &&
+            optionalString(request.resource.data, 'thumbnailData', 40960);
+
+          match /quiz/{quizDoc} {
+            allow read: if isSelf(uid) || isAdmin();
+            allow write: if false;
+          }
         }
       }
 
@@ -327,14 +352,25 @@ service cloud.firestore {
       // owner-or-admin + size-guard pattern as personalPlaylists applies.
       match /personalDocuments/{documentId} {
         allow read: if isSelf(uid) || isAdmin();
-        allow write: if (isSelf(uid) || isAdmin()) &&
+        allow create: if (isSelf(uid) || isAdmin()) &&
           optionalString(request.resource.data, 'title', 300) &&
           optionalEnum(request.resource.data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
           optionalString(request.resource.data, 'mimeType', 200) &&
           optionalString(request.resource.data, 'driveFileId', 200) &&
           optionalString(request.resource.data, 'driveConnectionId', 200) &&
           optionalString(request.resource.data, 'categoryId', 200) &&
-          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000);
+          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
+          optionalString(request.resource.data, 'thumbnailData', 40960);
+
+        allow update: if (isSelf(uid) || isAdmin()) && sameDriveReferences() &&
+          optionalString(request.resource.data, 'title', 300) &&
+          optionalEnum(request.resource.data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
+          optionalString(request.resource.data, 'mimeType', 200) &&
+          optionalString(request.resource.data, 'driveFileId', 200) &&
+          optionalString(request.resource.data, 'driveConnectionId', 200) &&
+          optionalString(request.resource.data, 'categoryId', 200) &&
+          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
+          optionalString(request.resource.data, 'thumbnailData', 40960);
 
         // AI-generated quiz cache, same shape/rules as a video's — written
         // only by server-side Admin SDK code (see src/lib/server/quiz.ts).
@@ -391,38 +427,15 @@ service cloud.firestore {
         allow write: if isAdmin() &&
           optionalString(request.resource.data, 'title', 500) &&
           optionalNumberInRange(request.resource.data, 'order', 0, 1000000);
+
+        match /quiz/{quizDoc} {
+          allow read: if isSignedIn() && isActive();
+          allow write: if false;
+        }
       }
       match /videoTags/{videoTagId} {
         allow read: if isSignedIn() && isActive();
         allow write: if isAdmin();
-      }
-    }
-
-    match /playlists/{playlistId}/videos/{videoId} {
-      match /quiz {
-        allow read: if isSignedIn() && isActive();
-        allow write: if false;
-      }
-    }
-
-    match /users/{uid}/personalPlaylists/{playlistId}/videos/{videoId} {
-      match /quiz {
-        allow read: if isSelf(uid) || isAdmin();
-        allow write: if false;
-      }
-    }
-
-    match /playlists/{playlistId}/videos/{videoId} {
-      match /quiz/{quizDoc} {
-        allow read: if isSignedIn() && isActive();
-        allow write: if false;
-      }
-    }
-
-    match /users/{uid}/personalPlaylists/{playlistId}/videos/{videoId} {
-      match /quiz/{quizDoc} {
-        allow read: if isSelf(uid) || isAdmin();
-        allow write: if false;
       }
     }
 

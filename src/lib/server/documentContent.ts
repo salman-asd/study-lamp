@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/server/firebase-admin";
-import { getAccessTokenForConnection } from "@/lib/server/driveConnections";
+import { withDriveAccessToken } from "@/lib/server/driveConnections";
 import { fetchFileContent } from "@/lib/server/googleDrive";
 import { extractDocumentText } from "@/lib/server/documentText";
 import type { DocumentFileType } from "@/types";
@@ -30,8 +30,9 @@ export async function getPersonalDocument(uid: string, documentId: string): Prom
  *  or quiz *generation* request, which is already gated by the sourceHash
  *  cache one layer up, same as a video's transcript fetch. */
 export async function extractPersonalDocumentText(uid: string, doc: LoadedDocument): Promise<string> {
-  const accessToken = await getAccessTokenForConnection(uid, doc.driveConnectionId);
-  const res = await fetchFileContent(accessToken, doc.driveFileId, null);
+  const res = await withDriveAccessToken(uid, doc.driveConnectionId, (accessToken) => (
+    fetchFileContent(accessToken, doc.driveFileId, null)
+  ));
   if (!res.ok) throw new Error(`Couldn't download "${doc.title}" from Drive (${res.status}).`);
   const arrayBuffer = await res.arrayBuffer();
   const text = await extractDocumentText(Buffer.from(arrayBuffer), doc.fileType);

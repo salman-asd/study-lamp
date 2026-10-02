@@ -10,6 +10,8 @@ import { validateGroqConnection } from "@/lib/ai/providers/groq";
 
 interface RouteParams { params: { id: string }; }
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const adminUid = await requireAdminUid(req);
   if (!adminUid) {

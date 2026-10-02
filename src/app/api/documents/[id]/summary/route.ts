@@ -24,6 +24,8 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // users/{uid}/summaries collection a video summary uses (key "d_"+documentId
 // instead of the video's id) via the existing client-side notes.ts helpers,
 // exactly like the video page already does for its own summary.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,9 +41,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ summary }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
     if (err instanceof AiServiceError) {
-      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] });
+      const status = STATUS_BY_CODE[err.code];
+      return NextResponse.json({ error: status >= 500 ? "Something went wrong generating a summary." : err.message }, { status });
     }
     console.error("Unexpected error generating document summary", err);
-    return NextResponse.json({ error: err?.message || "Something went wrong generating a summary." }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong generating a summary." }, { status: 500 });
   }
 }

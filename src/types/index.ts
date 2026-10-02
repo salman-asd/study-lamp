@@ -482,6 +482,8 @@ export interface PersonalVideo {
   videoUrl: string;
   youtubeVideoId?: string | null;
   thumbnailUrl: string;
+  thumbnailData?: string | null;
+  thumbnailAttemptedAt?: Timestamp | null;
   durationSeconds?: number;
   description?: string | null;
   categoryId?: string | null;
@@ -501,8 +503,9 @@ export interface PersonalVideo {
   priorityOrder?: number | null;
   /** Set only when platform === "google_drive" (Phase 14/16). The video's
    *  bytes live in Google Drive, not at videoUrl — playback goes through
-   *  the ownership-checked proxy at /api/drive/stream/[fileId], never a
-   *  direct Drive URL or token in the browser. driveConnectionId records
+   *  the signed proxy at /api/drive/stream/[fileId], never a direct Drive
+   *  URL or OAuth token in the browser. Ownership is checked when signing.
+   *  driveConnectionId records
    *  which of the owner's linked Google accounts holds the file, since a
    *  user may connect more than one (Phase 13). */
   driveFileId?: string | null;
@@ -578,6 +581,8 @@ export interface PersonalDocument {
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;
+  thumbnailData?: string | null;
+  thumbnailAttemptedAt?: Timestamp | null;
   categoryId?: string | null;
   tagIds?: string[];
   createdAt: Timestamp | null;

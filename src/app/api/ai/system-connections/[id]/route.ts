@@ -10,6 +10,8 @@ interface RouteParams {
   params: { id: string };
 }
 
+export const maxDuration = 60;
+
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const adminUid = await requireAdminUid(req);
   if (!adminUid) {

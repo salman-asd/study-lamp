@@ -4,7 +4,7 @@ import type { AiConnectionCredentials } from "../types";
 /**
  * Gemini adapter. This is the ONLY file in the codebase that should know:
  *   - Gemini's request/response JSON shape
- *   - Gemini's auth mechanism (API key as a query param)
+ *   - Gemini's auth mechanism (x-goog-api-key header)
  *   - Gemini's model-path URL format
  *   - how to turn a Gemini error/HTTP status into an AiServiceError
  *
@@ -96,9 +96,7 @@ export async function generateWithGemini(
   credentials: AiConnectionCredentials,
   prompt: string
 ): Promise<string> {
-  const url = `${BASE_URL}/${encodeURIComponent(credentials.model)}:generateContent?key=${encodeURIComponent(
-    credentials.apiKey
-  )}`;
+  const url = `${BASE_URL}/${encodeURIComponent(credentials.model)}:generateContent`;
 
   let res: Response;
   try {
@@ -106,7 +104,7 @@ export async function generateWithGemini(
       fetch(url, {
         method: "POST",
         signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": credentials.apiKey },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 1800 },
@@ -139,7 +137,7 @@ export async function validateGeminiConnection(
 ): Promise<{ ok: boolean; message: string }> {
   try {
     const res = await withTimeout(VALIDATE_TIMEOUT_MS, (signal) =>
-      fetch(`${BASE_URL}?key=${encodeURIComponent(apiKey)}`, { signal })
+      fetch(BASE_URL, { signal, headers: { "x-goog-api-key": apiKey } })
     );
 
     if (res.ok) return { ok: true, message: "Connection verified." };

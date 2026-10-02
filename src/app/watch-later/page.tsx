@@ -8,7 +8,7 @@ import { useAllVideos } from "@/hooks/useAllVideos";
 import { SortableList } from "@/components/dnd/SortableList";
 import { VideoListRow } from "@/components/video/VideoListRow";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toggleWatchLaterAny, setWatchedAny, setPriorityAny, reorderMixedList } from "@/lib/videoActions";
+import { toggleWatchLaterAny, setWatchedAny, setPriorityAny, reorderMixedList, updateVideoStateOptimistically } from "@/lib/videoActions";
 import { groupVideosByPlaylist, type PlaylistGroup } from "@/lib/groupByPlaylist";
 import type { VideoWithState } from "@/types";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ export default function WatchLaterPage() {
 
 function WatchLaterContent() {
   const { user } = useAuth();
-  const { loading, videos, refresh } = useAllVideos(user?.uid);
+  const { loading, videos, patchVideo } = useAllVideos(user?.uid);
   const [groups, setGroups] = React.useState<PlaylistGroup<VideoWithState>[]>([]);
 
   React.useEffect(() => {
@@ -47,21 +47,34 @@ function WatchLaterContent() {
   }
 
   async function handleRemove(v: VideoWithState) {
-    await toggleWatchLaterAny(user!.uid, v, false);
-    toast.success("Removed from Watch Later");
-    refresh();
+    try {
+      await updateVideoStateOptimistically(v, { isWatchLater: false, watchLaterOrder: undefined }, patchVideo, () => toggleWatchLaterAny(user!.uid, v, false));
+      toast.success("Removed from Watch Later");
+    } catch {
+      toast.error("Couldn't remove video from Watch Later.");
+    }
   }
 
   async function handleMarkWatched(v: VideoWithState) {
     const next = v.state?.status !== "completed";
-    await setWatchedAny(user!.uid, v, next);
-    toast.success(next ? "Marked watched" : "Marked unwatched");
-    refresh();
+    try {
+      await updateVideoStateOptimistically(v, {
+        status: next ? "completed" : "not_started",
+        watchedPercentage: next ? 100 : 0,
+        completedAt: next ? v.state?.completedAt || null : null,
+      }, patchVideo, () => setWatchedAny(user!.uid, v, next));
+      toast.success(next ? "Marked watched" : "Marked unwatched");
+    } catch {
+      toast.error("Couldn't update watched status.");
+    }
   }
 
   async function handlePriority(v: VideoWithState, p: "high" | "medium" | "low" | null) {
-    await setPriorityAny(user!.uid, v, p);
-    refresh();
+    try {
+      await updateVideoStateOptimistically(v, { priority: p, priorityOrder: p ? Date.now() : undefined }, patchVideo, () => setPriorityAny(user!.uid, v, p));
+    } catch {
+      toast.error("Couldn't update priority.");
+    }
   }
 
   return (

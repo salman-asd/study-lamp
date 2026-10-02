@@ -4,6 +4,10 @@ const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIR
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
+if (process.env.NODE_ENV === "production" && (!clientEmail || !privateKey)) {
+  throw new Error("FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY must be configured in production.");
+}
+
 if (!admin.apps.length) {
   if (projectId && clientEmail && privateKey) {
     admin.initializeApp({

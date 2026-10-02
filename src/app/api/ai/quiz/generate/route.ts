@@ -26,6 +26,8 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 
 const TRANSCRIPT_MAX_LENGTH = 50000;
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

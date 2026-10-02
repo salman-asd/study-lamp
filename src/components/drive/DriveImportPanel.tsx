@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { DrivePickerButton, type DrivePickerSelection } from "@/components/drive/DrivePickerButton";
+import type { DrivePickerKind } from "@/lib/driveMime";
 import {
   listDriveConnections, importDriveFile, importDriveFolder,
   startDriveUploadSession, uploadFileToDrive,
@@ -26,6 +27,7 @@ export function DriveImportPanel({
   onImported,
   accept,
   allowFolders = true,
+  kinds,
 }: {
   /** Target playlist for a picked/uploaded *video*. Documents ignore this. */
   playlistId?: string;
@@ -38,6 +40,7 @@ export function DriveImportPanel({
    *  a video playlist today (see /api/drive/import/folder), so offering
    *  folder selection there would silently do the wrong thing. */
   allowFolders?: boolean;
+  kinds?: DrivePickerKind[];
 }) {
   const { user } = useAuth();
   const [connections, setConnections] = React.useState<DriveConnectionSummary[]>([]);
@@ -61,17 +64,30 @@ export function DriveImportPanel({
     })();
   }, [user]);
 
-  async function handlePicked(selection: DrivePickerSelection) {
-    if (!user || !connectionId) return;
+  async function handlePicked(selections: DrivePickerSelection[] | DrivePickerSelection) {
+    const items = Array.isArray(selections) ? selections : [selections];
+    if (!user || !connectionId || items.length === 0) return;
     setBusy(true);
     try {
       const idToken = await user.getIdToken();
-      if (selection.isFolder) {
-        const result = await importDriveFolder(idToken, { connectionId, folderId: selection.id });
-        toast.success(`Imported "${selection.name}" as a new playlist (${result.videoCount} videos).`);
-      } else {
-        await importDriveFile(idToken, { connectionId, fileId: selection.id, playlistId });
-        toast.success(`Imported "${selection.name}".`);
+      const importedFiles: string[] = [];
+      const importedFolders: string[] = [];
+
+      for (const selection of items) {
+        if (selection.isFolder) {
+          const result = await importDriveFolder(idToken, { connectionId, folderId: selection.id });
+          importedFolders.push(`"${selection.name}" (${result.videoCount} videos)`);
+        } else {
+          await importDriveFile(idToken, { connectionId, fileId: selection.id, playlistId });
+          importedFiles.push(`"${selection.name}"`);
+        }
+      }
+
+      if (importedFolders.length > 0) {
+        toast.success(`Imported folder${importedFolders.length > 1 ? "s" : ""}: ${importedFolders.join(", ")}.`);
+      }
+      if (importedFiles.length > 0) {
+        toast.success(`Imported file${importedFiles.length > 1 ? "s" : ""}: ${importedFiles.join(", ")}.`);
       }
       onImported();
     } catch (error: any) {
@@ -87,7 +103,7 @@ export function DriveImportPanel({
     setUploadPct(0);
     try {
       const idToken = await user.getIdToken();
-      const uploadUrl = await startDriveUploadSession(idToken, { connectionId, name: file.name, mimeType: file.type });
+      const uploadUrl = await startDriveUploadSession(idToken, { connectionId, name: file.name, mimeType: file.type, sizeBytes: file.size });
       const uploaded = await uploadFileToDrive(uploadUrl, file, setUploadPct);
       await importDriveFile(idToken, { connectionId, fileId: uploaded.id, playlistId });
       toast.success(`Uploaded and saved "${file.name}".`);
@@ -129,7 +145,13 @@ export function DriveImportPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         {connectionId && (
-          <DrivePickerButton connectionId={connectionId} onPicked={handlePicked} label="Pick from Drive" allowFolders={allowFolders} />
+          <DrivePickerButton
+            connectionId={connectionId}
+            onPicked={handlePicked}
+            label="Pick from Drive"
+            allowFolders={allowFolders}
+            kinds={kinds ?? (allowFolders ? ["video"] : ["pdf", "docx", "pptx", "xlsx"])}
+          />
         )}
         <Button type="button" variant="outline" className="gap-1.5" disabled={busy} onClick={() => fileInputRef.current?.click()}>
           <UploadCloud className="h-4 w-4" /> Upload to Drive

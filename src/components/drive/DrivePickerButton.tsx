@@ -6,6 +6,7 @@ import { getDriveAccessToken } from "@/lib/driveClient";
 import { Button } from "@/components/ui/button";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
+import { buildPickerMimeTypes, type DrivePickerKind } from "@/lib/driveMime";
 
 declare global {
   interface Window {
@@ -54,11 +55,13 @@ export function DrivePickerButton({
   onPicked,
   allowFolders = true,
   label = "Pick from Drive",
+  kinds = ["video"],
 }: {
   connectionId: string;
-  onPicked: (selection: DrivePickerSelection) => void;
+  onPicked: (selections: DrivePickerSelection[]) => void;
   allowFolders?: boolean;
   label?: string;
+  kinds?: DrivePickerKind[];
 }) {
   const { user } = useAuth();
   const [opening, setOpening] = React.useState(false);
@@ -82,31 +85,66 @@ export function DrivePickerButton({
       const [accessToken] = await Promise.all([getDriveAccessToken(idToken, connectionId), loadPickerScripts()]);
 
       const google = window.google;
-      const viewIds = [google.picker.ViewId.DOCS_VIDEOS];
-      const views = viewIds.map((id: string) => new google.picker.DocsView(id).setIncludeFolders(allowFolders).setSelectFolderEnabled(allowFolders));
-      // Also let a user pick a PDF/Word/PowerPoint/Excel file (Phase 18-19),
-      // using the same picker instance rather than a second entry point.
-      views.push(new google.picker.DocsView(google.picker.ViewId.DOCS).setIncludeFolders(allowFolders).setSelectFolderEnabled(allowFolders));
+      const views: any[] = [];
+      const videoMimeTypes = kinds.includes("video") ? ["video/*"] : [];
+      const docMimeTypes = buildPickerMimeTypes(kinds.filter((kind) => kind !== "video"));
 
-      const picker = new google.picker.PickerBuilder()
+      if (videoMimeTypes.length > 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS_VIDEOS)
+            .setMimeTypes(videoMimeTypes.join(","))
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      if (docMimeTypes.length > 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setMimeTypes(docMimeTypes.join(","))
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      if (views.length === 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      const builder = new google.picker.PickerBuilder()
         .setAppId(appId)
         .setOAuthToken(accessToken)
         .setDeveloperKey(apiKey)
-        .setTitle("Choose a video, document, or folder")
-        .addView(views[0])
-        .addView(views[1])
+        .setTitle(
+          kinds.includes("video") && docMimeTypes.length > 0
+            ? "Choose a video, document, or folder"
+            : kinds.includes("video")
+              ? "Choose a video or folder"
+              : "Choose a document or folder"
+        )
+        .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
         .setCallback((data: any) => {
           if (data.action === google.picker.Action.PICKED) {
-            const doc = data.docs[0];
-            onPicked({
+            const selected = Array.isArray(data.docs) ? data.docs : [];
+            if (selected.length === 0) return;
+            onPicked(selected.map((doc: any) => ({
               id: doc.id,
               name: doc.name,
               mimeType: doc.mimeType,
               isFolder: doc.mimeType === "application/vnd.google-apps.folder",
-            });
+            })));
           }
-        })
-        .build();
+        });
+
+      for (const view of views) {
+        builder.addView(view);
+      }
+
+      const picker = builder.build();
       picker.setVisible(true);
     } catch (error: any) {
       toast.error(error?.message || "Couldn't open the Google Drive picker.");

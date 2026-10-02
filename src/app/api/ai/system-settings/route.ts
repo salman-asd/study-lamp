@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminUid } from "@/lib/server/requireAuth";
 import { getSystemAiDefaults, setSystemAiDefaults, validateSystemDefaultsInput } from "@/lib/server/aiQuota";
 
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const adminUid = await requireAdminUid(req);
   if (!adminUid) {

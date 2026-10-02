@@ -19,6 +19,8 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // (see quizSource.ts and src/lib/server/quiz.ts's document-specific
 // get/saveDocumentQuiz), same generateVideoQuiz() call — a document's
 // extracted text takes the transcript's place.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -55,9 +57,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ questions }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
     if (err instanceof AiServiceError) {
-      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] });
+      const status = STATUS_BY_CODE[err.code];
+      return NextResponse.json({ error: status >= 500 ? "Something went wrong generating a quiz." : err.message }, { status });
     }
     console.error("Unexpected error generating document quiz", err);
-    return NextResponse.json({ error: err?.message || "Something went wrong generating a quiz." }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong generating a quiz." }, { status: 500 });
   }
 }

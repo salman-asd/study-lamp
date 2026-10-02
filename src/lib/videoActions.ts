@@ -12,7 +12,8 @@ import {
   setPersonalVideoPriority,
   reorderPersonalVideoList,
 } from "@/lib/firestore/personalPlaylists";
-import type { PriorityLevel, VideoWithState } from "@/types";
+import { videoKey } from "@/lib/allVideosUtils";
+import type { PriorityLevel, UserVideoState, VideoWithState } from "@/types";
 
 /**
  * Cross-cutting personal views (Watch Later, Favorites, Priority, Continue
@@ -50,6 +51,21 @@ export async function setPriorityAny(uid: string, video: VideoWithState, priorit
     return setPersonalVideoPriority(uid, video.playlistId, video.id, priority);
   }
   return setSharedPriority(uid, video.id, video.playlistId, priority);
+}
+
+export async function updateVideoStateOptimistically(
+  video: VideoWithState,
+  patch: Partial<UserVideoState>,
+  patchVideo: (key: string, patch: Partial<UserVideoState>) => () => void,
+  persist: () => Promise<unknown>,
+): Promise<void> {
+  const rollback = patchVideo(videoKey(video), patch);
+  try {
+    await persist();
+  } catch (error) {
+    rollback();
+    throw error;
+  }
 }
 
 /** Persists a drag-reordered Watch Later / Priority list that may mix

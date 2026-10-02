@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildDefaultQuota, consumeQuotaState, validateQuotaOverrideInput, validateSystemDefaultsInput } from "./aiQuota";
+import { buildDefaultQuota, consumeQuotaState, getQuotaDate, validateQuotaOverrideInput, validateSystemDefaultsInput } from "./aiQuota";
 
 describe("AI quota helpers", () => {
+  it("uses the configured timezone when determining the quota day", () => {
+    assert.equal(getQuotaDate(new Date("2026-10-01T17:59:00.000Z"), "Asia/Dhaka"), "2026-10-01");
+    assert.equal(getQuotaDate(new Date("2026-10-01T18:00:00.000Z"), "Asia/Dhaka"), "2026-10-02");
+  });
+
   it("builds a default quota for a user with the platform limit", () => {
     const quota = buildDefaultQuota({ defaultDailyLimit: 7 });
     assert.equal(quota.dailyLimit, 7);

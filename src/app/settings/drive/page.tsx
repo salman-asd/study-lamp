@@ -9,9 +9,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { listDriveConnections, disconnectDrive, startDriveConnect } from "@/lib/driveClient";
+import { backfillDriveThumbnails, listDriveConnections, disconnectDrive, startDriveConnect } from "@/lib/driveClient";
 import type { DriveConnectionSummary } from "@/types";
-import { HardDrive, Plus, Trash2 } from "lucide-react";
+import { HardDrive, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function DriveSettingsPage() {
@@ -29,6 +29,8 @@ function DriveSettingsContent() {
   const [loading, setLoading] = React.useState(true);
   const [connecting, setConnecting] = React.useState(false);
   const [disconnectingId, setDisconnectingId] = React.useState<string | null>(null);
+  const [refreshingThumbnails, setRefreshingThumbnails] = React.useState(false);
+  const [thumbnailsRemaining, setThumbnailsRemaining] = React.useState<number | null>(null);
 
   const load = React.useCallback(async () => {
     if (!user) return;
@@ -89,6 +91,29 @@ function DriveSettingsContent() {
     }
   }
 
+  async function handleRefreshThumbnails() {
+    if (!user || refreshingThumbnails) return;
+    setRefreshingThumbnails(true);
+    setThumbnailsRemaining(null);
+    let processed = 0;
+    try {
+      const idToken = await user.getIdToken();
+      let remaining = 1;
+      while (remaining > 0) {
+        const batch = await backfillDriveThumbnails(idToken);
+        processed += batch.processed;
+        remaining = batch.remaining;
+        setThumbnailsRemaining(remaining);
+      }
+      toast.success(processed ? `Refreshed ${processed} Drive thumbnails.` : "Drive thumbnails are up to date.");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to refresh Drive thumbnails.");
+    } finally {
+      setRefreshingThumbnails(false);
+      setThumbnailsRemaining(null);
+    }
+  }
+
   return (
     <AppShell>
       <div className="mx-auto max-w-3xl space-y-6">
@@ -113,9 +138,17 @@ function DriveSettingsContent() {
                   </p>
                 </div>
               </div>
-              <Button size="sm" className="gap-1.5" onClick={handleConnect} loading={connecting} loadingText="Redirecting…">
-                <Plus className="h-4 w-4" /> Connect Google Drive
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {connections.some((connection) => connection.status !== "invalid") && (
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={handleRefreshThumbnails} disabled={refreshingThumbnails}>
+                    <RefreshCw className={`h-4 w-4 ${refreshingThumbnails ? "animate-spin" : ""}`} />
+                    {refreshingThumbnails ? `Refreshing${thumbnailsRemaining === null ? "…" : ` (${thumbnailsRemaining} left)`}` : "Refresh thumbnails"}
+                  </Button>
+                )}
+                <Button size="sm" className="gap-1.5" onClick={handleConnect} loading={connecting} loadingText="Redirecting…">
+                  <Plus className="h-4 w-4" /> Connect Google Drive
+                </Button>
+              </div>
             </div>
 
             {loading && (

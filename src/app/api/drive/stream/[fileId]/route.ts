@@ -1,36 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { getAccessTokenForConnection, DriveConnectionError } from "@/lib/server/driveConnections";
+import { getAccessTokenForConnection, withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { fetchFileContent } from "@/lib/server/googleDrive";
-import { ownsDriveFile } from "@/lib/server/driveOwnership";
+import { checkRateLimit } from "@/lib/server/rateLimit";
+import { createDriveTiming, type DriveTiming } from "@/lib/server/timing";
+import { verifyDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
 
 interface RouteParams {
   params: { fileId: string };
 }
 
-// Secure playback/download proxy (Phase 16): VideoPlayer and the Study
-// Materials viewer point a plain <video>/<iframe>/<a download> at this URL
-// instead of ever receiving a Drive URL or access token directly. Every
-// request is (a) authenticated via the caller's own Firebase ID token and
-// (b) checked against ownsDriveFile before a single byte is streamed.
+// Signed capability URLs let native media elements fetch this proxy without
+// exposing Firebase or Google tokens. The signature binds the file,
+// connection, purpose, and user until the URL expires.
 //
 // Range headers are forwarded both ways so seeking/resuming a large video
 // works exactly like any other platform — the browser's own <video> element
 // issues ranged requests automatically once it sees Accept-Ranges: bytes.
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+// Stay within the route duration supported by the deployment plan.
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const timing = createDriveTiming("stream");
+  try {
+    return await getStreamResponse(req, params, timing);
+  } finally {
+    timing.log();
+  }
+}
 
-  const connectionId = req.nextUrl.searchParams.get("connectionId");
-  const download = req.nextUrl.searchParams.get("download") === "1";
-  if (!connectionId) return NextResponse.json({ error: "connectionId is required." }, { status: 400 });
+async function getStreamResponse(req: NextRequest, params: RouteParams["params"], timing: DriveTiming) {
+  const uid = req.nextUrl.searchParams.get("u") || "";
+  const connectionId = req.nextUrl.searchParams.get("c") || "";
+  const exp = Number(req.nextUrl.searchParams.get("e"));
+  const purpose = req.nextUrl.searchParams.get("p") as DriveUrlPurpose | null;
+  const sig = req.nextUrl.searchParams.get("s") || "";
+  const allowedPurpose = purpose === "stream" || purpose === "download";
+  const validSignature = allowedPurpose && await timing.measure("signature_ms", async () => (
+    verifyDriveUrl({ uid, fileId: params.fileId, connectionId, purpose, exp, sig })
+  ));
+  if (!validSignature) {
+    return NextResponse.json({ error: "Invalid or expired Drive URL." }, { status: 401 });
+  }
+  if (!checkRateLimit(uid, { scope: "drive:stream" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
-  const allowed = await ownsDriveFile(uid, params.fileId, connectionId);
-  if (!allowed) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  const download = purpose === "download";
 
   try {
-    const accessToken = await getAccessTokenForConnection(uid, connectionId);
-    const upstream = await fetchFileContent(accessToken, params.fileId, req.headers.get("range"));
+    const upstream = await withDriveAccessToken(
+      uid,
+      connectionId,
+      (accessToken) => timing.measure("upstream_ms", () => fetchFileContent(accessToken, params.fileId, req.headers.get("range"))),
+      () => timing.measure("token_ms", () => getAccessTokenForConnection(uid, connectionId)),
+    );
 
     if (!upstream.ok && upstream.status !== 206) {
       return NextResponse.json({ error: "Google Drive couldn't serve this file." }, { status: upstream.status === 404 ? 404 : 502 });
@@ -41,9 +64,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       const value = upstream.headers.get(key);
       if (value) headers.set(key, value);
     }
+    const contentType = (upstream.headers.get("content-type") || "application/octet-stream").split(";")[0].trim().toLowerCase();
     headers.set("Accept-Ranges", "bytes");
     headers.set("Cache-Control", "private, max-age=0, no-store");
-    if (download) headers.set("Content-Disposition", "attachment");
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("Referrer-Policy", "no-referrer");
+    if (download || !(contentType.startsWith("video/") || contentType === "application/pdf" || contentType.startsWith("image/"))) {
+      headers.set("Content-Disposition", "attachment");
+    }
 
     return new NextResponse(upstream.body, { status: upstream.status, headers });
   } catch (err) {

@@ -6,6 +6,7 @@ import { ImageOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { getSignedDriveUrls } from "@/lib/driveClient";
 
 // Re-exported so existing imports (and tests) of these helpers from this module keep working.
 export { signedUrlExpiry, hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
@@ -76,12 +77,9 @@ export function VideoThumbnail({
   overlayStart,
 }: VideoThumbnailProps) {
   const [failed, setFailed] = React.useState(false);
-  // A Drive-hosted thumbnail (Phase 16) is served through our own
-  // ownership-checked proxy, which needs the viewer's ID token — a plain
-  // <img>/<Image> src can't carry an Authorization header, so it's appended
-  // as a query param instead (the proxy route accepts either; see
-  // requireAuthenticatedUid). Every other thumbnail source is unaffected.
-  const driveAuthedSrc = useDriveAuthedSrc(src);
+  // Persisted Drive thumbnail paths are markers; resolve them to short-lived
+  // signed URLs because image elements cannot set Authorization headers.
+  const driveAuthedSrc = useSignedDriveThumbnail(src);
 
   // A thumbnail URL can change (video edited, re-scraped) while the component
   // stays mounted. Without this reset, one failed load would permanently
@@ -222,20 +220,14 @@ export function skipOptimizer(src: string, videoUrl?: string | null): boolean {
     candidates.includes("fb.watch") ||
     candidates.includes("instagram.com") ||
     candidates.includes("cdninstagram.com") ||
-    // A Drive-proxied thumbnail's ID token is short-lived; letting Next's
-    // optimizer cache the fetched bytes is fine, but there's no benefit to
-    // routing it through the optimizer's own fetch (still same-origin,
-    // still one request either way), so it's simplest to always bypass it.
+    // Drive URLs are short-lived signed capabilities; load the same-origin
+    // proxy directly rather than copying them into the image optimizer URL.
     candidates.includes("/api/drive/thumbnail/")
   );
 }
 
-/** Appends the current user's ID token to a Drive thumbnail proxy URL.
- *  Every other src passes through unchanged. Re-fetches the token whenever
- *  the underlying src changes (a new video, or the token naturally
- *  rotating on a long-open tab doesn't need to be handled — a stale token
- *  just gets a fresh one next time this src changes or the page reloads). */
-function useDriveAuthedSrc(src?: string | null): string | null | undefined {
+/** Resolves a persisted Drive thumbnail marker to a short-lived signed URL. */
+function useSignedDriveThumbnail(src?: string | null): string | null | undefined {
   const { user } = useAuth();
   const [resolved, setResolved] = React.useState(src);
 
@@ -246,9 +238,21 @@ function useDriveAuthedSrc(src?: string | null): string | null | undefined {
     }
     if (!user) return;
     let active = true;
-    user.getIdToken().then((idToken) => {
-      if (active) setResolved(`${src}&idToken=${encodeURIComponent(idToken)}`);
-    });
+    setResolved(undefined);
+    const signedRequest = async () => {
+      try {
+        const marker = new URL(src, window.location.origin);
+        const fileId = decodeURIComponent(marker.pathname.split("/").filter(Boolean).pop() || "");
+        const connectionId = marker.searchParams.get("connectionId") || "";
+        if (!fileId || !connectionId) throw new Error("Invalid Drive thumbnail marker.");
+        const idToken = await user.getIdToken();
+        const [signedUrl] = await getSignedDriveUrls(idToken, user.uid, [{ fileId, connectionId, purpose: "thumb" }]);
+        if (active) setResolved(signedUrl);
+      } catch {
+        if (active) setResolved(null);
+      }
+    };
+    void signedRequest();
     return () => { active = false; };
   }, [src, user]);
 

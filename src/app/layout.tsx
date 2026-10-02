@@ -3,6 +3,7 @@ import { Fraunces, Inter, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { AuthProvider } from "@/components/auth/AuthProvider";
+import { AllVideosProvider } from "@/components/video/AllVideosProvider";
 import { TourProvider } from "@/components/tour/TourProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
@@ -31,10 +32,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <TooltipProvider delayDuration={200}>
             <AuthProvider>
-              <TourProvider>
-                {children}
-                <Toaster richColors position="top-right" />
-              </TourProvider>
+              <AllVideosProvider>
+                <TourProvider>
+                  {children}
+                  <Toaster richColors position="top-right" />
+                </TourProvider>
+              </AllVideosProvider>
             </AuthProvider>
           </TooltipProvider>
         </ThemeProvider>

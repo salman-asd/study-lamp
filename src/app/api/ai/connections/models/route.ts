@@ -12,6 +12,8 @@ import type { AiProvider } from "@/types";
 // For refreshing an *already-saved* connection's models without having the
 // key on hand, see /api/ai/connections/[id]/models instead, which decrypts
 // the stored key server-side.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

@@ -1,8 +1,9 @@
 import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment,
+  addDoc, collection, deleteDoc, doc, getCountFromServer, getDoc, getDocs, increment,
   orderBy, query, serverTimestamp, Timestamp, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { mapWithConcurrency } from "@/lib/allVideosUtils";
 import { computePlaylistSummary, summaryNeedsWrite } from "@/lib/playlistSummary";
 import type { PersonalPlaylist, PersonalPlaylistSortMode, PersonalPlaylistVisibility, PersonalVideo, PriorityLevel, VideoPlatform, WatchStatus } from "@/types";
 
@@ -297,10 +298,10 @@ export async function addPersonalVideo(
     platform?: VideoPlatform;
   }
 ): Promise<string> {
-  const existing = await getDocs(videosCol(ownerId, playlistId));
+  const existing = await getCountFromServer(videosCol(ownerId, playlistId));
   const ref = await addDoc(videosCol(ownerId, playlistId), {
     ...data,
-    order: existing.size,
+    order: existing.data().count,
     status: "not_started" as WatchStatus,
     watchedPercentage: 0,
     currentPositionSeconds: 0,
@@ -368,7 +369,6 @@ export async function findDuplicatePersonalVideoUrl(ownerId: string, playlistId:
   const normalized = candidateUrl.trim();
   if (!normalized) return false;
 
-  const list = await listPersonalVideos(ownerId, playlistId);
   const canonicalCandidate = (() => {
     try {
       const parsed = new URL(normalized);
@@ -377,15 +377,12 @@ export async function findDuplicatePersonalVideoUrl(ownerId: string, playlistId:
       return normalized.toLowerCase();
     }
   })();
-
-  return list.some((video) => {
-    const current = video.videoUrl.trim();
-    try {
-      return new URL(current).href === canonicalCandidate;
-    } catch {
-      return current.toLowerCase() === canonicalCandidate.toLowerCase();
-    }
-  });
+  const candidates = Array.from(new Set([normalized, canonicalCandidate]));
+  const matches = await Promise.all(candidates.map((videoUrl) => getDocs(query(
+    videosCol(ownerId, playlistId),
+    where("videoUrl", "==", videoUrl),
+  ))));
+  return matches.some((snapshot) => !snapshot.empty);
 }
 
 export async function updatePersonalVideoMeta(
@@ -655,11 +652,13 @@ export async function reorderPersonalVideoList(
  *  query so no extra Firestore rules are needed. */
 export async function listAllPersonalVideos(ownerId: string): Promise<(PersonalVideo & { playlistTitle: string })[]> {
   const playlists = await listPersonalPlaylists(ownerId);
-  const results = await Promise.all(
-    playlists.map(async (p) => {
-      const vids = await listPersonalVideos(ownerId, p.id);
-      return vids.map((v) => ({ ...v, playlistTitle: p.title }));
-    })
+  const results = await mapWithConcurrency(
+    playlists,
+    8,
+    async (playlist) => {
+      const vids = await listPersonalVideos(ownerId, playlist.id);
+      return vids.map((video) => ({ ...video, playlistTitle: playlist.title }));
+    },
   );
   return results.flat();
 }

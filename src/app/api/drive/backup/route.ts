@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { getAccessTokenForConnection, DriveConnectionError } from "@/lib/server/driveConnections";
-import { getOrCreateBackupFolder, uploadJsonFile } from "@/lib/server/googleDrive";
+import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { getOrCreateBackupFolder, isValidDriveConnectionId, uploadJsonFile } from "@/lib/server/googleDrive";
+import { checkRateLimit } from "@/lib/server/rateLimit";
 import { buildBackupPayload } from "@/lib/server/driveBackup";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!checkRateLimit(uid, { scope: "drive:backup" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
   let body: any;
   try {
@@ -15,14 +20,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
   const connectionId = typeof body.connectionId === "string" ? body.connectionId : "";
-  if (!connectionId) return NextResponse.json({ error: "connectionId is required." }, { status: 400 });
+  if (!isValidDriveConnectionId(connectionId)) return NextResponse.json({ error: "A valid connectionId is required." }, { status: 400 });
 
   try {
-    const accessToken = await getAccessTokenForConnection(uid, connectionId);
     const payload = await buildBackupPayload(uid);
-    const folderId = await getOrCreateBackupFolder(accessToken);
     const name = `study-lamp-backup-${payload.createdAt.slice(0, 10)}-${Date.now()}.json`;
-    const file = await uploadJsonFile(accessToken, folderId, name, payload);
+    const file = await withDriveAccessToken(uid, connectionId, async (accessToken) => {
+      const folderId = await getOrCreateBackupFolder(accessToken);
+      return uploadJsonFile(accessToken, folderId, name, payload);
+    });
     return NextResponse.json({
       fileId: file.id,
       name: file.name,

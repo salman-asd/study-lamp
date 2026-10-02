@@ -16,7 +16,7 @@ export function personalVideoToVideoWithState(pv: PersonalVideo & { playlistTitl
     title: pv.title,
     videoUrl: pv.videoUrl,
     youtubeVideoId: pv.youtubeVideoId,
-    thumbnailUrl: pv.thumbnailUrl,
+    thumbnailUrl: pv.thumbnailData || pv.thumbnailUrl,
     durationSeconds: pv.durationSeconds,
     creatorName: pv.creator,
     platform: pv.platform,
