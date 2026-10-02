@@ -219,6 +219,7 @@ service cloud.firestore {
           request.resource.data.videoId is string &&
           request.resource.data.score is number &&
           request.resource.data.totalQuestions is number &&
+          request.resource.data.totalQuestions <= 50 &&
           optionalString(request.resource.data, 'categoryId', 200) &&
           optionalTimestamp(request.resource.data, 'completedAt');
         allow delete: if isSelf(uid) || isAdmin();

@@ -33,7 +33,9 @@ function StudyMaterialDetailContent() {
   const [generatingSummary, setGeneratingSummary] = React.useState(false);
   const [questions, setQuestions] = React.useState<QuizQuestion[] | null>(null);
   const [generatingQuiz, setGeneratingQuiz] = React.useState(false);
-  const [revealed, setRevealed] = React.useState<Record<string, string | null>>({});
+  const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
+  const [quizSubmitted, setQuizSubmitted] = React.useState(false);
+  const [quizResult, setQuizResult] = React.useState<{ score: number; total: number } | null>(null);
 
   React.useEffect(() => {
     (async () => {
@@ -80,7 +82,6 @@ function StudyMaterialDetailContent() {
   async function handleGenerateQuiz() {
     if (!user || !documentId) return;
     setGeneratingQuiz(true);
-    setRevealed({});
     try {
       const idToken = await user.getIdToken();
       const res = await fetch(`/api/documents/${documentId}/quiz`, {
@@ -91,10 +92,49 @@ function StudyMaterialDetailContent() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate a quiz.");
       setQuestions(data.questions);
+      setSelectedAnswers({});
+      setQuizSubmitted(false);
+      setQuizResult(null);
     } catch (error: any) {
       toast.error(error?.message || "Failed to generate a quiz.");
     } finally {
       setGeneratingQuiz(false);
+    }
+  }
+
+  async function handleQuizSubmit() {
+    if (!user || !documentId || !doc || !questions?.length) return;
+    const total = questions.length;
+    const score = questions.reduce((count, question) => (
+      count + (selectedAnswers[question.id] === question.correctOptionId ? 1 : 0)
+    ), 0);
+    setQuizResult({ score, total });
+    setQuizSubmitted(true);
+
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/quiz-attempts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          videoId: `d_${documentId}`,
+          categoryId: doc.categoryId || undefined,
+          source: "document",
+          score,
+          totalQuestions: total,
+          answers: questions.map((question) => ({
+            questionId: question.id,
+            chosenOptionId: selectedAnswers[question.id] || "",
+            wasCorrect: selectedAnswers[question.id] === question.correctOptionId,
+          })),
+        }),
+      });
+      if (!response.ok) toast.error("Couldn't save your quiz result");
+    } catch {
+      toast.error("Couldn't save your quiz result");
     }
   }
 
@@ -157,18 +197,20 @@ function StudyMaterialDetailContent() {
                     <p className="mb-2 text-sm font-medium">{i + 1}. {q.prompt}</p>
                     <div className="space-y-1.5">
                       {q.options.map((opt) => {
-                        const pick = revealed[q.id];
-                        const isPicked = pick === opt.id;
+                        const selected = selectedAnswers[q.id];
+                        const isPicked = selected === opt.id;
                         const isCorrect = opt.id === q.correctOptionId;
                         return (
                           <button
                             key={opt.id}
                             type="button"
-                            onClick={() => setRevealed((prev) => ({ ...prev, [q.id]: opt.id }))}
+                            onClick={() => setSelectedAnswers((prev) => ({ ...prev, [q.id]: opt.id }))}
+                            disabled={quizSubmitted}
+                            aria-pressed={isPicked}
                             className={`block w-full rounded-md border px-3 py-1.5 text-left text-sm transition-colors ${
-                              pick
+                              quizSubmitted
                                 ? isCorrect ? "border-success bg-success/10" : isPicked ? "border-destructive bg-destructive/10" : "border-border"
-                                : "border-border hover:bg-muted/50"
+                                : isPicked ? "border-primary bg-accent/10" : "border-border hover:bg-muted/50"
                             }`}
                           >
                             {opt.text}
@@ -176,9 +218,16 @@ function StudyMaterialDetailContent() {
                         );
                       })}
                     </div>
-                    {revealed[q.id] && <p className="mt-2 text-xs text-muted-foreground">{q.explanation}</p>}
+                    {quizSubmitted && <p className="mt-2 text-xs text-muted-foreground">{q.explanation}</p>}
                   </div>
                 ))}
+                {!quizSubmitted ? (
+                  <Button onClick={handleQuizSubmit} className="w-full sm:w-auto">Submit quiz</Button>
+                ) : quizResult ? (
+                  <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+                    Result: {quizResult.score} / {quizResult.total} correct
+                  </div>
+                ) : null}
               </div>
             )}
           </CardContent>

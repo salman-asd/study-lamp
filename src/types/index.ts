@@ -343,9 +343,18 @@ export interface QuizAttempt {
   userId: string;
   videoId: string;
   categoryId?: string | null;
+  playlistId?: string;
+  source?: "shared" | "personal" | "document";
+  answers?: QuizAttemptAnswer[];
   score: number;
   totalQuestions: number;
   completedAt: Timestamp | null;
+}
+
+export interface QuizAttemptAnswer {
+  questionId: string;
+  chosenOptionId: string;
+  wasCorrect: boolean;
 }
 
 export type AiProvider = "gemini" | "openai" | "anthropic" | "openrouter" | "groq";

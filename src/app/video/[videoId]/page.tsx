@@ -226,22 +226,29 @@ function VideoPageContent() {
 
     try {
       const idToken = await user.getIdToken();
-      await fetch("/api/quiz-attempts", {
+      const response = await fetch("/api/quiz-attempts", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          userId: user.uid,
           videoId: video.id,
-          categoryId: video.categoryId || null,
+          categoryId: video.categoryId || undefined,
+          playlistId,
+          source: "shared",
           score,
           totalQuestions: total,
+          answers: quizQuestions.map((question) => ({
+            questionId: question.id,
+            chosenOptionId: selectedAnswers[question.id] || "",
+            wasCorrect: selectedAnswers[question.id] === question.correctOptionId,
+          })),
         }),
       });
+      if (!response.ok) toast.error("Couldn't save your quiz result");
     } catch {
-      // Intentionally non-blocking: the quiz can still be graded locally.
+      toast.error("Couldn't save your quiz result");
     }
   }
 
