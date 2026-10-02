@@ -1,5 +1,7 @@
 import type { AiProvider } from "@/types";
 
+export type AiLanguage = "en" | "bn";
+
 /**
  * Everything an adapter needs to make one request, with the API key already
  * decrypted. Building/loading this from Firestore (Phase 1/2's
@@ -14,6 +16,7 @@ export interface AiConnectionCredentials {
   provider: AiProvider;
   apiKey: string;
   model: string;
+  language?: AiLanguage;
 }
 
 /** Transcript-backed input for the first AI feature. Title remains optional

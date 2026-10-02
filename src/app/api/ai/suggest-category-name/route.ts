@@ -2,13 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { adminDb } from "@/lib/server/firebase-admin";
-import { AiServiceError } from "@/lib/ai/aiService";
-import { generateWithGemini } from "@/lib/ai/providers/gemini";
-import { generateWithOpenAi } from "@/lib/ai/providers/openai";
-import { generateWithAnthropic } from "@/lib/ai/providers/anthropic";
-import { generateWithOpenRouter } from "@/lib/ai/providers/openrouter";
-import { generateWithGroq } from "@/lib/ai/providers/groq";
-import type { AiConnectionCredentials } from "@/lib/ai/types";
+import { AiServiceError, generateAiText } from "@/lib/ai/aiService";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 const STATUS_BY_CODE: Record<string, number> = {
   auth: 400,
@@ -40,6 +35,8 @@ export async function POST(req: NextRequest) {
   const candidateSubtopics = Array.isArray(body?.candidateSubtopics)
     ? body.candidateSubtopics.map((item: unknown) => String(item).trim()).filter(Boolean).slice(0, 100)
     : [];
+  const language = await resolveAiLanguage(uid, body?.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   if (!typedValue) {
     return NextResponse.json({ error: "The typed topic is required." }, { status: 400 });
   }
@@ -52,16 +49,7 @@ export async function POST(req: NextRequest) {
     }));
     const suggestion = await withAiConnection(uid, async (apiKey, provider, model) => {
       const prompt = `Suggest the correctly spelled learning topic. The learner is choosing a subtopic under "${contextName}".\n\nInput: "${typedValue}"\nKnown subtopics: ${candidateSubtopics.join(", ") || "(none)"}\nExisting main categories: ${candidateCategories.map((c) => c.name).join(", ") || "(none)"}\n\nIf the input is a typo, return the closest known subtopic. If it is a valid new topic, preserve it with normal title casing. Return JSON only in this exact shape:\n{\n  "cleanedName": "string",\n  "isDuplicate": boolean,\n  "matchingCategory": "string or null"\n}`;
-      const credentials: AiConnectionCredentials = { provider, apiKey, model };
-      let text: string;
-      switch (provider) {
-        case "gemini": text = await generateWithGemini(credentials, prompt); break;
-        case "openai": text = await generateWithOpenAi(credentials, prompt); break;
-        case "anthropic": text = await generateWithAnthropic(credentials, prompt); break;
-        case "openrouter": text = await generateWithOpenRouter(credentials, prompt); break;
-        case "groq": text = await generateWithGroq(credentials, prompt); break;
-        default: throw new AiServiceError("unsupported_provider", `Provider "${provider}" is not supported.`);
-      }
+      const text = await generateAiText({ provider, apiKey, model, language }, prompt);
       let parsed: any;
       try {
         parsed = JSON.parse((text.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));

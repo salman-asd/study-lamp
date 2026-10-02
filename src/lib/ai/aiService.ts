@@ -31,33 +31,36 @@ import { sanitizeRoadmapStepDetails, sanitizeRoadmapSteps } from "@/lib/roadmapU
  * further connections on a transient AiServiceError instead of returning
  * after the first attempt).
  */
+export function withResponseLanguage(prompt: string, language: "en" | "bn" = "en"): string {
+  const instruction = language === "bn"
+    ? "Respond in Bengali (Bangla). Translate all learner-facing text, including titles, explanations, and examples. Keep JSON keys, IDs, and required structural values unchanged."
+    : "Respond in English. Keep JSON keys, IDs, and required structural values unchanged.";
+  return `${prompt}\n\nResponse language: ${instruction}`;
+}
+
+export async function generateAiText(connection: AiConnectionCredentials, prompt: string): Promise<string> {
+  const localizedPrompt = withResponseLanguage(prompt, connection.language);
+
+  switch (connection.provider) {
+    case "gemini": return generateWithGemini(connection, localizedPrompt);
+    case "openai": return generateWithOpenAi(connection, localizedPrompt);
+    case "anthropic": return generateWithAnthropic(connection, localizedPrompt);
+    case "openrouter": return generateWithOpenRouter(connection, localizedPrompt);
+    case "groq": return generateWithGroq(connection, localizedPrompt);
+    default: {
+      const _exhaustive: never = connection.provider;
+      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
+    }
+  }
+}
+
 export async function generateVideoSummary(
   connection: AiConnectionCredentials,
   video: VideoSummaryInput
 ): Promise<string> {
   const prompt = buildStarterSummaryPrompt(video);
 
-  switch (connection.provider) {
-    case "gemini":
-      return generateWithGemini(connection, prompt);
-    case "openai":
-      return generateWithOpenAi(connection, prompt);
-    case "anthropic":
-      return generateWithAnthropic(connection, prompt);
-    case "openrouter":
-      return generateWithOpenRouter(connection, prompt);
-    case "groq":
-      return generateWithGroq(connection, prompt);
-    default:
-      // Exhaustiveness check: if AiProvider ever grows a new member without
-      // a matching case above, this line fails to compile.
-      // eslint-disable-next-line no-case-declarations
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError(
-        "unsupported_provider",
-        `Provider "${_exhaustive}" is not supported yet.`
-      );
-  }
+  return generateAiText(connection, prompt);
 }
 
 export async function generateDocumentPageExplanation(
@@ -70,17 +73,7 @@ Use the provided page text as the only factual source. Define important terms, c
 Page text:
 ${input.pageText}`;
 
-  switch (connection.provider) {
-    case "gemini": return generateWithGemini(connection, prompt);
-    case "openai": return generateWithOpenAi(connection, prompt);
-    case "anthropic": return generateWithAnthropic(connection, prompt);
-    case "openrouter": return generateWithOpenRouter(connection, prompt);
-    case "groq": return generateWithGroq(connection, prompt);
-    default: {
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
-    }
-  }
+  return generateAiText(connection, prompt);
 }
 
 export interface RoadmapPlan {
@@ -183,17 +176,7 @@ export async function generateRoadmapStepsForLevel(
   input: { categoryName: string; level: RoadmapLevel; subtopics: string[] }
 ): Promise<RoadmapStep[]> {
   const prompt = buildRoadmapStepsPrompt(input);
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini": raw = await generateWithGemini(connection, prompt); break;
-    case "openai": raw = await generateWithOpenAi(connection, prompt); break;
-    case "anthropic": raw = await generateWithAnthropic(connection, prompt); break;
-    case "openrouter": raw = await generateWithOpenRouter(connection, prompt); break;
-    case "groq": raw = await generateWithGroq(connection, prompt); break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
-  }
+  const raw = await generateAiText(connection, prompt);
   return parseRoadmapStepsFromText(raw);
 }
 
@@ -221,17 +204,7 @@ export function parseTopicClarificationFromText(raw: string): TopicClarification
 
 export async function generateTopicClarification(connection: AiConnectionCredentials, rawName: string): Promise<TopicClarification> {
   const prompt = clarifyTopicPrompt(rawName);
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini": raw = await generateWithGemini(connection, prompt); break;
-    case "openai": raw = await generateWithOpenAi(connection, prompt); break;
-    case "anthropic": raw = await generateWithAnthropic(connection, prompt); break;
-    case "openrouter": raw = await generateWithOpenRouter(connection, prompt); break;
-    case "groq": raw = await generateWithGroq(connection, prompt); break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
-  }
+  const raw = await generateAiText(connection, prompt);
   return parseTopicClarificationFromText(raw);
 }
 
@@ -285,17 +258,7 @@ export async function generateFocusClarification(
   focusText: string
 ): Promise<TopicClarification> {
   const prompt = clarifyFocusPrompt(categoryName, focusText);
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini": raw = await generateWithGemini(connection, prompt); break;
-    case "openai": raw = await generateWithOpenAi(connection, prompt); break;
-    case "anthropic": raw = await generateWithAnthropic(connection, prompt); break;
-    case "openrouter": raw = await generateWithOpenRouter(connection, prompt); break;
-    case "groq": raw = await generateWithGroq(connection, prompt); break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
-  }
+  const raw = await generateAiText(connection, prompt);
   return parseTopicClarificationFromText(raw);
 }
 
@@ -334,30 +297,7 @@ export async function generateRoadmapPlan(
 ): Promise<RoadmapPlan> {
   const prompt = roadmapPrompt(categoryName);
 
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini":
-      raw = await generateWithGemini(connection, prompt);
-      break;
-    case "openai":
-      raw = await generateWithOpenAi(connection, prompt);
-      break;
-    case "anthropic":
-      raw = await generateWithAnthropic(connection, prompt);
-      break;
-    case "openrouter":
-      raw = await generateWithOpenRouter(connection, prompt);
-      break;
-    case "groq":
-      raw = await generateWithGroq(connection, prompt);
-      break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError(
-        "unsupported_provider",
-        `Provider "${_exhaustive}" is not supported yet.`
-      );
-  }
+  const raw = await generateAiText(connection, prompt);
 
   return parseRoadmapPlanFromText(raw);
 }
@@ -413,30 +353,7 @@ export async function generateVideoQuiz(
 ): Promise<QuizQuestion[]> {
   const prompt = buildQuizPrompt(video);
 
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini":
-      raw = await generateWithGemini(connection, prompt);
-      break;
-    case "openai":
-      raw = await generateWithOpenAi(connection, prompt);
-      break;
-    case "anthropic":
-      raw = await generateWithAnthropic(connection, prompt);
-      break;
-    case "openrouter":
-      raw = await generateWithOpenRouter(connection, prompt);
-      break;
-    case "groq":
-      raw = await generateWithGroq(connection, prompt);
-      break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError(
-        "unsupported_provider",
-        `Provider "${_exhaustive}" is not supported yet.`
-      );
-  }
+  const raw = await generateAiText(connection, prompt);
 
   return parseQuizQuestionsFromText(raw);
 }
@@ -492,30 +409,7 @@ export async function generateGoalSuggestions(
 ): Promise<GoalSuggestion[]> {
   const prompt = buildGoalSuggestionPrompt(input);
 
-  let raw: string;
-  switch (connection.provider) {
-    case "gemini":
-      raw = await generateWithGemini(connection, prompt);
-      break;
-    case "openai":
-      raw = await generateWithOpenAi(connection, prompt);
-      break;
-    case "anthropic":
-      raw = await generateWithAnthropic(connection, prompt);
-      break;
-    case "openrouter":
-      raw = await generateWithOpenRouter(connection, prompt);
-      break;
-    case "groq":
-      raw = await generateWithGroq(connection, prompt);
-      break;
-    default:
-      const _exhaustive: never = connection.provider;
-      throw new AiServiceError(
-        "unsupported_provider",
-        `Provider "${_exhaustive}" is not supported yet.`
-      );
-  }
+  const raw = await generateAiText(connection, prompt);
 
   return parseGoalSuggestionsFromText(raw);
 }
@@ -524,6 +418,7 @@ export { AiServiceError } from "./errors";
 export type { AiErrorCode } from "./errors";
 export type {
   AiConnectionCredentials,
+  AiLanguage,
   GoalSuggestion,
   GoalSuggestionInput,
   QuizQuestion,

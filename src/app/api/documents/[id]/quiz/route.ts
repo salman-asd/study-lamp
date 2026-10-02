@@ -6,6 +6,7 @@ import { buildVideoSourceHash, hashDocumentText } from "@/lib/quizSource";
 import { getDocumentQuiz, saveDocumentQuiz } from "@/lib/server/quiz";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
 import { ScannedPdfError } from "@/lib/server/documentText";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 interface RouteParams {
   params: { id: string };
@@ -35,17 +36,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   } catch {
     // no body is fine — summary is optional, used only for the cache key
   }
+  const language = await resolveAiLanguage(uid, body.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   const summary = typeof body.summary === "string" ? body.summary : null;
   try {
     const text = await extractPersonalDocumentText(uid, doc);
-    const sourceHash = buildVideoSourceHash(doc.title, null, summary, hashDocumentText(text));
+    const sourceHash = `${buildVideoSourceHash(doc.title, null, summary, hashDocumentText(text))}:${language}`;
     const cached = await getDocumentQuiz(uid, doc.id).catch(() => null);
     if (cached && cached.sourceHash === sourceHash) {
       return NextResponse.json({ questions: cached.questions }, { headers: { "Cache-Control": "private, no-store" } });
     }
 
     const questions = await withAiConnection(uid, async (apiKey, provider, model) => {
-      return await generateVideoQuiz({ provider, apiKey, model }, { title: doc.title, description: null, transcript: text, summary });
+      return await generateVideoQuiz({ provider, apiKey, model, language }, { title: doc.title, description: null, transcript: text, summary });
     });
 
     try {

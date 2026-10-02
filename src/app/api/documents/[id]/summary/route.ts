@@ -5,6 +5,7 @@ import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
 import { ScannedPdfError } from "@/lib/server/documentText";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 interface RouteParams {
   params: { id: string };
@@ -31,13 +32,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+  }
+  const language = await resolveAiLanguage(uid, (body as Record<string, unknown>).language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
+
   const doc = await getPersonalDocument(uid, params.id);
   if (!doc) return NextResponse.json({ error: "Document not found." }, { status: 404 });
 
   try {
     const text = await extractPersonalDocumentText(uid, doc);
     const summary = await withAiConnection(uid, async (apiKey, provider, model) => {
-      return await generateVideoSummary({ provider, apiKey, model }, { title: doc.title, description: null, transcript: text });
+      return await generateVideoSummary({ provider, apiKey, model, language }, { title: doc.title, description: null, transcript: text });
     });
     return NextResponse.json({ summary }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {

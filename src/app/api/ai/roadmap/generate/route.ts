@@ -6,6 +6,7 @@ import { AiServiceError, generateRoadmapStepsForLevel } from "@/lib/ai/aiService
 import { sanitizeRoadmapSteps } from "@/lib/roadmapUtils";
 import type { RoadmapLevel } from "@/types";
 import admin from "firebase-admin";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 const STATUS_BY_CODE: Record<string, number> = {
   auth: 400, rate_limit: 429, invalid_request: 502, blocked: 422,
@@ -26,6 +27,8 @@ export async function POST(req: NextRequest) {
   const level = body?.level as RoadmapLevel;
   const subtopics: string[] = Array.isArray(body?.subtopics) ? body.subtopics.map((s: any) => String(s).trim()).filter(Boolean) : [];
   const roadmapId = String(body?.roadmapId ?? "").trim() || null;
+  const language = await resolveAiLanguage(uid, body?.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
 
   if (!categoryId && !categoryName) return NextResponse.json({ error: "A categoryId or categoryName is required." }, { status: 400 });
   if (!["basic", "intermediate", "advanced"].includes(level)) return NextResponse.json({ error: "A valid level is required." }, { status: 400 });
@@ -39,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     const steps = sanitizeRoadmapSteps(
       await withAiConnection(uid, (apiKey, provider, model) =>
-        generateRoadmapStepsForLevel({ provider, apiKey, model }, { categoryName: resolvedName, level, subtopics })
+        generateRoadmapStepsForLevel({ provider, apiKey, model, language }, { categoryName: resolvedName, level, subtopics })
       )
     );
 

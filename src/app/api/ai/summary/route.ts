@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoSummary, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
 import { resolveTranscript } from "@/lib/ai/universalTranscript";
-import { getAiPreferences } from "@/lib/server/aiPreferences";
+import { getAiPreferences, resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 
 const TRANSCRIPT_MAX_LENGTH = 50000;
@@ -69,6 +69,8 @@ export async function POST(req: NextRequest) {
   }
   const youtubeVideoId = typeof b.youtubeVideoId === "string" ? b.youtubeVideoId.trim() : "";
   const manualTranscript = typeof b.manualTranscript === "string" ? b.manualTranscript : "";
+  const language = await resolveAiLanguage(uid, b.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   if (manualTranscript.length > TRANSCRIPT_MAX_LENGTH) {
     return NextResponse.json({ error: "manualTranscript is too long." }, { status: 400 });
   }
@@ -98,7 +100,7 @@ export async function POST(req: NextRequest) {
 
     const summary = await withAiConnection(uid, async (apiKey, provider, model) => {
       return await generateVideoSummary(
-        { provider, apiKey, model },
+        { provider, apiKey, model, language },
         { title, description, transcript }
       );
     });

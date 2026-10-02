@@ -14,6 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 import {
   getPersonalDocumentAnnotations,
   getPersonalDocumentClient,
@@ -59,6 +61,7 @@ export default function StudyMaterialDetailPage() {
 function StudyMaterialDetailContent() {
   const { documentId } = useParams<{ documentId: string }>();
   const { user } = useAuth();
+  const { language, setLanguage, languageReady } = useAiLanguage();
   const [doc, setDoc] = React.useState<PersonalDocument | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [summary, setSummary] = React.useState("");
@@ -194,7 +197,7 @@ function StudyMaterialDetailContent() {
   }
 
   async function handleExplainPage(pageNumber: number, pageText: string) {
-    if (!user || !documentId) return;
+    if (!user || !documentId || !languageReady) return;
     setExplainingPage(true);
     setExplanation("");
     setExplanationPage(pageNumber);
@@ -204,7 +207,7 @@ function StudyMaterialDetailContent() {
       const response = await fetch(`/api/documents/${documentId}/explain`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ pageNumber, pageText }),
+        body: JSON.stringify({ pageNumber, pageText, language }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Couldn't explain this page.");
@@ -217,11 +220,15 @@ function StudyMaterialDetailContent() {
   }
 
   async function handleGenerateSummary() {
-    if (!user || !documentId) return;
+    if (!user || !documentId || !languageReady) return;
     setGeneratingSummary(true);
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`/api/documents/${documentId}/summary`, { method: "POST", headers: { Authorization: `Bearer ${idToken}` } });
+      const res = await fetch(`/api/documents/${documentId}/summary`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ language }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate a summary.");
       setSummary(data.summary);
@@ -235,14 +242,14 @@ function StudyMaterialDetailContent() {
   }
 
   async function handleGenerateQuiz() {
-    if (!user || !documentId) return;
+    if (!user || !documentId || !languageReady) return;
     setGeneratingQuiz(true);
     try {
       const idToken = await user.getIdToken();
       const res = await fetch(`/api/documents/${documentId}/quiz`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ summary: summary || null }),
+        body: JSON.stringify({ summary: summary || null, language }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate a quiz.");
@@ -337,7 +344,8 @@ function StudyMaterialDetailContent() {
             <h1 className="break-words font-display text-2xl font-semibold">{doc.title}</h1>
             <p className="mt-1 text-xs text-muted-foreground">{doc.fileType.toUpperCase()} · Google Drive</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || generatingSummary || generatingQuiz || explainingPage} />
             <Button variant="outline" size="sm" onClick={handleDownload}>
               <Download className="mr-1.5 h-4 w-4" />Download
             </Button>

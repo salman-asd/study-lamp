@@ -1,8 +1,10 @@
 import type { GoalSuggestion } from "@/lib/ai/types";
+import type { AiLanguage } from "@/lib/ai/types";
 
 export type { GoalSuggestion };
 
 export interface SuggestGoalsInput {
+  language?: AiLanguage;
   categoryName: string;
   level: string;
   steps: Array<{ title: string; description?: string }>;

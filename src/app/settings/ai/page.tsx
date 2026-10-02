@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiConnectionDialog } from "@/components/settings/AiConnectionDialog";
 import { SortableList } from "@/components/dnd/SortableList";
@@ -41,7 +42,7 @@ function AiConnectionsContent() {
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [editingConnection, setEditingConnection] = React.useState<AiConnectionSummary | null>(null);
-  const [aiPreferences, setAiPreferences] = React.useState<AiPreferences>({ speechToTextEnabled: false });
+  const [aiPreferences, setAiPreferences] = React.useState<AiPreferences>({ speechToTextEnabled: false, generatingLanguage: "en" });
   const [aiQuota, setAiQuota] = React.useState<AiQuotaSummary | null>(null);
   const [savingPreference, setSavingPreference] = React.useState(false);
 
@@ -70,11 +71,27 @@ function AiConnectionsContent() {
   async function handleSpeechToTextChange(enabled: boolean) {
     if (!user) return;
     const previous = aiPreferences;
-    setAiPreferences({ speechToTextEnabled: enabled });
+    setAiPreferences({ ...previous, speechToTextEnabled: enabled });
     setSavingPreference(true);
     try {
       const idToken = await user.getIdToken();
       setAiPreferences(await updateAiPreferences(idToken, { speechToTextEnabled: enabled }));
+    } catch (error: any) {
+      setAiPreferences(previous);
+      toast.error(error?.message || "Unable to update AI preferences.");
+    } finally {
+      setSavingPreference(false);
+    }
+  }
+
+  async function handleGeneratingLanguageChange(language: "en" | "bn") {
+    if (!user) return;
+    const previous = aiPreferences;
+    setAiPreferences({ ...previous, generatingLanguage: language });
+    setSavingPreference(true);
+    try {
+      const idToken = await user.getIdToken();
+      setAiPreferences(await updateAiPreferences(idToken, { generatingLanguage: language }));
     } catch (error: any) {
       setAiPreferences(previous);
       toast.error(error?.message || "Unable to update AI preferences.");
@@ -227,6 +244,30 @@ function AiConnectionsContent() {
             ]} />
           </GuideSection>
         </GuideCard>
+
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div>
+              <h2 className="font-display text-base font-semibold">Generating language</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Choose the default language for AI-generated summaries, quizzes, roadmaps, explanations, and suggestions. You can override it for each generation.</p>
+            </div>
+            <Select
+              value={aiPreferences.generatingLanguage}
+              onValueChange={(value) => {
+                if (value === "en" || value === "bn") void handleGeneratingLanguageChange(value);
+              }}
+              disabled={savingPreference}
+            >
+              <SelectTrigger className="w-36" aria-label="Generating language">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="en">English (EN)</SelectItem>
+                <SelectItem value="bn">Bengali (BN)</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardContent className="space-y-4 p-4">

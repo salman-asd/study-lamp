@@ -3,6 +3,7 @@ import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { getPersonalDocument } from "@/lib/server/documentContent";
 import { AiServiceError, generateDocumentPageExplanation, type AiErrorCode } from "@/lib/ai/aiService";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 interface RouteParams {
   params: { id: string };
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
   }
   const values = body as Record<string, unknown>;
+  const language = await resolveAiLanguage(uid, values.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   if (!Number.isSafeInteger(values.pageNumber) || Number(values.pageNumber) < 1) {
     return NextResponse.json({ error: "pageNumber must be a positive integer." }, { status: 400 });
   }
@@ -46,7 +49,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   try {
     const explanation = await withAiConnection(uid, (apiKey, provider, model) => (
-      generateDocumentPageExplanation({ apiKey, provider, model }, {
+      generateDocumentPageExplanation({ apiKey, provider, model, language }, {
         title: document.title,
         pageNumber: Number(values.pageNumber),
         pageText: values.pageText as string,
