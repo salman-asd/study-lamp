@@ -4,7 +4,8 @@ import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveCo
 import { getFileMetadata, listFolderVideoFiles, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { createPlaylistAdmin, bulkAddDriveVideosAdmin } from "@/lib/server/driveImport";
 import { checkRateLimit } from "@/lib/server/rateLimit";
-import { fetchAndStoreDriveThumbnail } from "@/lib/server/driveThumbnails";
+import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
+import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
 
 // Imports a picked Drive folder as a new playlist, one video per file in the
 // folder (direct children only — no recursive sub-folders, matching Phase
@@ -17,7 +18,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:import-folder" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
+  if (!checkRateLimit(uid, { scope: "drive:import-folder", preset: "import" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
   let body: any;
   try {
@@ -42,30 +43,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `"${folderMeta.name}" doesn't contain any video files.` }, { status: 422 });
     }
 
-    const storedThumbnails: Array<Awaited<ReturnType<typeof fetchAndStoreDriveThumbnail>> | null> = new Array(files.length).fill(null);
-    let cursor = 0;
-    await Promise.all(Array.from({ length: Math.min(5, files.length) }, async () => {
-      while (cursor < files.length) {
-        const index = cursor++;
-        const file = files[index];
-        storedThumbnails[index] = await withDriveAccessToken(uid, connectionId, (accessToken) => (
-          fetchAndStoreDriveThumbnail(accessToken, file.thumbnailLink)
-        )).catch(() => null);
-      }
-    }));
+    // Thumbnail bytes are stored server-side (driveThumbs, concurrency 5); the
+    // video docs below only carry the marker. Never fails the import.
+    await fetchAndSaveDriveThumbnails(
+      uid,
+      connectionId,
+      files.map((file) => ({ fileId: file.id, thumbnailLink: file.thumbnailLink })),
+      (operation) => withDriveAccessToken(uid, connectionId, operation),
+    );
 
     const playlistId = await createPlaylistAdmin(uid, folderMeta.name);
     const added = await bulkAddDriveVideosAdmin(
       uid,
       playlistId,
-      files.map((f, index) => ({
+      files.map((f) => ({
         title: f.name,
         videoUrl: `https://drive.google.com/file/d/${f.id}/view`,
-        thumbnailUrl: `/api/drive/thumbnail/${f.id}?connectionId=${connectionId}`,
+        thumbnailUrl: driveThumbnailMarker(f.id, connectionId),
         durationSeconds: f.videoMediaMetadata?.durationMillis ? Math.round(Number(f.videoMediaMetadata.durationMillis) / 1000) : 0,
         driveFileId: f.id,
         driveConnectionId: connectionId,
-        ...storedThumbnails[index],
+        thumbnailAttempted: true,
       }))
     );
 

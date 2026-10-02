@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { checkRateLimit } from "@/lib/server/rateLimit";
-import { ownsDriveFile } from "@/lib/server/driveOwnership";
+import { findOwnedDriveFiles, ownedKey } from "@/lib/server/driveOwnership";
 import { isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { signDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
 
@@ -20,7 +20,7 @@ interface SignItem {
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:sign" })) {
+  if (!checkRateLimit(uid, { scope: "drive:sign", preset: "sign" })) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
   }
 
@@ -49,8 +49,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const urls = await Promise.all(normalized.map(async (item) => {
-      if (!await ownsDriveFile(uid, item.fileId, item.connectionId)) return null;
+    // One batched ownership lookup (cached for 60 s) instead of two queries per item.
+    const owned = await findOwnedDriveFiles(uid, normalized);
+
+    // Never fail the whole batch: one unowned/missing file only fails its own
+    // entry, and the response keeps the request order.
+    const urls = normalized.map((item) => {
+      if (!owned.has(ownedKey(item))) return { ...item, error: "not_found" as const };
       const signed = signDriveUrl({ ...item, uid });
       const path = item.purpose === "thumb" ? "thumbnail" : "stream";
       const url = new URL(`/api/drive/${path}/${encodeURIComponent(item.fileId)}`, "https://signed-url.invalid");
@@ -60,9 +65,8 @@ export async function POST(req: NextRequest) {
       url.searchParams.set("p", item.purpose);
       url.searchParams.set("s", signed.sig);
       return { ...item, url: `${url.pathname}${url.search}`, exp: signed.exp };
-    }));
+    });
 
-    if (urls.some((item) => item === null)) return NextResponse.json({ error: "Not found." }, { status: 404 });
     return NextResponse.json({ urls }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("Failed to sign Drive URLs", error);

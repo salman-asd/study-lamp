@@ -26,6 +26,8 @@ import {
 } from "@/lib/firestore/personalDocuments";
 import { listCategories, listTags } from "@/lib/firestore/categoriesTags";
 import { listDriveConnections } from "@/lib/driveClient";
+import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
+import { useSignedDriveThumbnail } from "@/hooks/useSignedDriveThumbnail";
 import { countStudyMaterials, filterAndSortStudyMaterials } from "@/lib/documentFilters";
 import type { StudyMaterialSort, StudyMaterialTypeFilter } from "@/lib/documentFilters";
 import type { DrivePickerKind } from "@/lib/driveMime";
@@ -146,7 +148,7 @@ function StudyMaterialsContent() {
     if (!user) return;
     if (!confirm(`Remove "${title}" from Study Lamp? The file stays in your Google Drive.`)) return;
     try {
-      await deletePersonalDocument(user.uid, documentId);
+      await deletePersonalDocument(await user.getIdToken(), documentId);
       setDocuments((previous) => previous.filter((document) => document.id !== documentId));
     } catch (error: any) {
       toast.error(error?.message || "Failed to remove this document.");
@@ -345,10 +347,18 @@ function DocumentThumbnail({ document, viewMode }: { document: PersonalDocument;
   const className = viewMode === "grid"
     ? "relative aspect-[16/9] w-full overflow-hidden bg-muted"
     : "relative h-16 w-24 shrink-0 overflow-hidden rounded-sm bg-muted";
+  // Thumbnail bytes live server-side; the card resolves a marker to a short-lived
+  // signed URL, exactly like video thumbnails. Documents imported before the
+  // marker existed derive it from their Drive ids (the route self-heals).
+  const marker = document.thumbnailUrl
+    || (document.driveFileId && document.driveConnectionId ? driveThumbnailMarker(document.driveFileId, document.driveConnectionId) : null);
+  const signedSrc = useSignedDriveThumbnail(marker);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => { setFailed(false); }, [marker]);
   return (
     <div className={className}>
-      {document.thumbnailData ? (
-        <Image src={document.thumbnailData} alt="" fill unoptimized sizes={viewMode === "grid" ? "(max-width: 640px) 100vw, 33vw" : "96px"} className="object-cover" />
+      {signedSrc && !failed ? (
+        <Image src={signedSrc} alt="" fill unoptimized onError={() => setFailed(true)} sizes={viewMode === "grid" ? "(max-width: 640px) 100vw, 33vw" : "96px"} className="object-cover" />
       ) : (
         <div className="flex h-full items-center justify-center">{TYPE_ICON[document.fileType]}</div>
       )}

@@ -483,6 +483,9 @@ export interface PersonalVideo {
   videoUrl: string;
   youtubeVideoId?: string | null;
   thumbnailUrl: string;
+  /** @deprecated Legacy base64 thumbnail. Bytes now live in users/{uid}/driveThumbs
+   *  (server-only); `thumbnailUrl` is a marker resolved via a signed URL. Cleared by
+   *  POST /api/drive/thumbnails/backfill. Do not read this field. */
   thumbnailData?: string | null;
   thumbnailAttemptedAt?: Timestamp | null;
   durationSeconds?: number;
@@ -582,6 +585,10 @@ export interface PersonalDocument {
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;
+  /** Marker (see driveThumbnailMarker), resolved to a signed URL by the client.
+   *  Absent on documents imported before R3 — derive it from the Drive ids. */
+  thumbnailUrl?: string | null;
+  /** @deprecated Legacy base64 thumbnail; see PersonalVideo.thumbnailData. Do not read. */
   thumbnailData?: string | null;
   thumbnailAttemptedAt?: Timestamp | null;
   categoryId?: string | null;

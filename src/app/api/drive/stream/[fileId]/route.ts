@@ -43,7 +43,7 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
   if (!validSignature) {
     return NextResponse.json({ error: "Invalid or expired Drive URL." }, { status: 401 });
   }
-  if (!checkRateLimit(uid, { scope: "drive:stream" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
+  if (!checkRateLimit(uid, { scope: "drive:stream", preset: "stream" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
   const download = purpose === "download";
 

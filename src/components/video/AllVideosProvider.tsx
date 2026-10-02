@@ -6,7 +6,7 @@ import { listPlaylists, listVideos } from "@/lib/firestore/playlists";
 import { getAllUserVideoStates } from "@/lib/firestore/userVideoState";
 import { listAllPersonalVideos } from "@/lib/firestore/personalPlaylists";
 import { personalVideoToVideoWithState } from "@/lib/personalVideoAdapter";
-import { mapWithConcurrency, videoKey } from "@/lib/allVideosUtils";
+import { mapWithConcurrency, shouldApplyCachedSnapshot, videoKey } from "@/lib/allVideosUtils";
 import type { Playlist, UserVideoState, VideoWithState } from "@/types";
 
 const CACHE_TTL_MS = 2 * 60_000;
@@ -68,7 +68,17 @@ export function AllVideosProvider({ children }: { children: React.ReactNode }) {
   const load = React.useCallback(async (uid: string, force = false) => {
     const cached = cacheRef.current.get(uid);
     if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      if (activeUidRef.current === uid) updateSnapshot({ ...cached, loading: false });
+      // Fresh cache: only publish when the visible snapshot is for another user
+      // or still loading. Publishing an identical snapshot re-renders consumers
+      // for nothing (and used to retrigger useAllVideos' effect forever).
+      const current = snapshotRef.current;
+      if (activeUidRef.current === uid && shouldApplyCachedSnapshot({
+        currentUid: current.uid,
+        currentLoading: current.loading,
+        targetUid: uid,
+      })) {
+        updateSnapshot({ ...cached, loading: false });
+      }
       return;
     }
 
@@ -76,9 +86,15 @@ export function AllVideosProvider({ children }: { children: React.ReactNode }) {
     if (inFlight) return inFlight;
 
     if (activeUidRef.current === uid) {
-      updateSnapshot(cached
-        ? { ...cached, loading: false }
-        : { uid, loading: true, playlists: [], videos: [], fetchedAt: 0 });
+      const current = snapshotRef.current;
+      if (cached) {
+        // Stale-while-revalidate: keep showing cached data while refetching.
+        if (shouldApplyCachedSnapshot({ currentUid: current.uid, currentLoading: current.loading, targetUid: uid })) {
+          updateSnapshot({ ...cached, loading: false });
+        }
+      } else if (current.uid !== uid || !current.loading) {
+        updateSnapshot({ uid, loading: true, playlists: [], videos: [], fetchedAt: 0 });
+      }
     }
 
     const request = (async () => {

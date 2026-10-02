@@ -4,7 +4,8 @@ import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveCo
 import { getFileMetadata, documentFileTypeFromMime, SUPPORTED_VIDEO_MIME_PREFIX, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { addDriveVideoAdmin, addDriveDocumentAdmin, getOrCreateUnsortedPlaylistAdmin } from "@/lib/server/driveImport";
 import { checkRateLimit } from "@/lib/server/rateLimit";
-import { fetchAndStoreDriveThumbnail } from "@/lib/server/driveThumbnails";
+import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
+import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
 
 // Imports a single file the user picked via the Google Picker (Phase 14), or
 // one just finished uploading straight to Drive from the browser (Phase 15
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:import-file" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
+  if (!checkRateLimit(uid, { scope: "drive:import-file", preset: "import" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
   let body: any;
   try {
@@ -37,26 +38,28 @@ export async function POST(req: NextRequest) {
 
     if (meta.mimeType.startsWith(SUPPORTED_VIDEO_MIME_PREFIX)) {
       const targetPlaylistId = playlistId || (await getOrCreateUnsortedPlaylistAdmin(uid));
-      const storedThumbnail = await withDriveAccessToken(uid, connectionId, (accessToken) => (
-        fetchAndStoreDriveThumbnail(accessToken, meta.thumbnailLink)
-      )).catch(() => null);
+      // Bytes go to the server-only driveThumbs collection; the video doc only
+      // keeps the marker. A thumbnail failure never fails the import.
+      await fetchAndSaveDriveThumbnails(uid, connectionId, [{ fileId: meta.id, thumbnailLink: meta.thumbnailLink }], (operation) => (
+        withDriveAccessToken(uid, connectionId, operation)
+      ));
       const videoId = await addDriveVideoAdmin(uid, targetPlaylistId, {
         title: meta.name,
         videoUrl: `https://drive.google.com/file/d/${meta.id}/view`,
-        thumbnailUrl: `/api/drive/thumbnail/${meta.id}?connectionId=${connectionId}`,
+        thumbnailUrl: driveThumbnailMarker(meta.id, connectionId),
         durationSeconds: meta.videoMediaMetadata?.durationMillis ? Math.round(Number(meta.videoMediaMetadata.durationMillis) / 1000) : 0,
         driveFileId: meta.id,
         driveConnectionId: connectionId,
-        ...storedThumbnail,
+        thumbnailAttempted: true,
       });
       return NextResponse.json({ kind: "video", playlistId: targetPlaylistId, videoId });
     }
 
     const fileType = documentFileTypeFromMime(meta.mimeType);
     if (fileType) {
-      const storedThumbnail = await withDriveAccessToken(uid, connectionId, (accessToken) => (
-        fetchAndStoreDriveThumbnail(accessToken, meta.thumbnailLink)
-      )).catch(() => null);
+      await fetchAndSaveDriveThumbnails(uid, connectionId, [{ fileId: meta.id, thumbnailLink: meta.thumbnailLink }], (operation) => (
+        withDriveAccessToken(uid, connectionId, operation)
+      ));
       const documentId = await addDriveDocumentAdmin(uid, {
         title: meta.name,
         fileType,
@@ -66,7 +69,8 @@ export async function POST(req: NextRequest) {
         driveConnectionId: connectionId,
         md5Checksum: meta.md5Checksum ?? null,
         modifiedTime: meta.modifiedTime ?? null,
-        ...storedThumbnail,
+        thumbnailUrl: driveThumbnailMarker(meta.id, connectionId),
+        thumbnailAttempted: true,
       });
       return NextResponse.json({ kind: "document", documentId });
     }

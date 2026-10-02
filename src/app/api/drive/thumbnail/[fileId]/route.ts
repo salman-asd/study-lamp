@@ -4,7 +4,13 @@ import { getFileMetadata } from "@/lib/server/googleDrive";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 import { createDriveTiming, type DriveTiming } from "@/lib/server/timing";
 import { verifyDriveUrl } from "@/lib/server/driveSignedUrl";
-import { fetchAndStoreDriveThumbnail, readStoredDriveThumbnail, saveDriveThumbnailReference } from "@/lib/server/driveThumbnails";
+import {
+  fetchAndStoreDriveThumbnail,
+  lookupStoredDriveThumbnail,
+  markDriveThumbnailMissing,
+  saveDriveThumbnail,
+  type DriveThumbnailImage,
+} from "@/lib/server/driveThumbnails";
 
 interface RouteParams {
   params: { fileId: string };
@@ -34,21 +40,27 @@ async function getThumbnailResponse(req: NextRequest, params: RouteParams["param
   if (!validSignature) {
     return NextResponse.json({ error: "Invalid or expired Drive URL." }, { status: 401 });
   }
-  if (!checkRateLimit(uid, { scope: "drive:thumbnail" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
+  if (!checkRateLimit(uid, { scope: "drive:thumbnail", preset: "thumbnail" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
   try {
-    let image = await timing.measure("stored_read_ms", () => readStoredDriveThumbnail(uid, params.fileId, connectionId));
+    const lookup = await timing.measure("stored_read_ms", () => lookupStoredDriveThumbnail(uid, params.fileId, connectionId));
+    let image: DriveThumbnailImage | null = lookup.kind === "hit" ? lookup.image : null;
+    if (lookup.kind === "missing" && lookup.recent) {
+      // Google had no thumbnail a moment ago; don't ask Drive again on every request.
+      return NextResponse.json({ error: "No thumbnail available." }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+    }
     if (!image) {
-      const stored = await withDriveAccessToken(uid, connectionId, async (accessToken) => {
+      // Self-heal: fetch from Google once, keep the bytes server-side, then serve them.
+      image = await withDriveAccessToken(uid, connectionId, async (accessToken) => {
         const meta = await timing.measure("metadata_ms", () => getFileMetadata(accessToken, params.fileId));
         return timing.measure("upstream_ms", () => (
           fetchAndStoreDriveThumbnail(accessToken, meta.thumbnailLink)
         ));
       }, () => timing.measure("token_ms", () => getAccessTokenForConnection(uid, connectionId)));
-      await saveDriveThumbnailReference(uid, params.fileId, connectionId, stored);
-      image = await timing.measure("stored_read_ms", () => readStoredDriveThumbnail(uid, params.fileId, connectionId));
+      if (image) await saveDriveThumbnail(uid, connectionId, params.fileId, image);
+      else await markDriveThumbnailMissing(uid, connectionId, params.fileId).catch(() => undefined);
     }
-    if (!image) return NextResponse.json({ error: "No thumbnail available." }, { status: 404 });
+    if (!image) return NextResponse.json({ error: "No thumbnail available." }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
 
     const headers = new Headers();
     const contentType = image.contentType.split(";")[0].trim().toLowerCase();

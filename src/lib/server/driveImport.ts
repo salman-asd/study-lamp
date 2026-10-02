@@ -66,7 +66,8 @@ export interface DriveVideoInput {
   durationSeconds?: number;
   driveFileId: string;
   driveConnectionId: string;
-  thumbnailData?: string | null;
+  /** True when a thumbnail download was attempted (bytes live in driveThumbs, not here). */
+  thumbnailAttempted?: boolean;
 }
 
 /** Adds one Drive-backed video to a playlist. Dedupes on driveFileId (a
@@ -83,8 +84,7 @@ export async function addDriveVideoAdmin(ownerId: string, playlistId: string, vi
     title: video.title,
     videoUrl: video.videoUrl,
     thumbnailUrl: video.thumbnailUrl,
-    thumbnailData: video.thumbnailData ?? null,
-    thumbnailAttemptedAt: video.thumbnailData ? admin.firestore.FieldValue.serverTimestamp() : null,
+    thumbnailAttemptedAt: video.thumbnailAttempted ? admin.firestore.FieldValue.serverTimestamp() : null,
     durationSeconds: video.durationSeconds ?? 0,
     platform: "google_drive",
     driveFileId: video.driveFileId,
@@ -141,8 +141,7 @@ export async function bulkAddDriveVideosAdmin(ownerId: string, playlistId: strin
         title: video.title,
         videoUrl: video.videoUrl,
         thumbnailUrl: video.thumbnailUrl,
-        thumbnailData: video.thumbnailData ?? null,
-        thumbnailAttemptedAt: video.thumbnailData ? now : null,
+        thumbnailAttemptedAt: video.thumbnailAttempted ? now : null,
         durationSeconds: video.durationSeconds ?? 0,
         platform: "google_drive",
         driveFileId: video.driveFileId,
@@ -186,7 +185,9 @@ export interface DriveDocumentInput {
   driveConnectionId: string;
   md5Checksum?: string | null;
   modifiedTime?: string | null;
-  thumbnailData?: string | null;
+  /** Marker for the server-side thumbnail (see driveThumbnailMarker). */
+  thumbnailUrl?: string | null;
+  thumbnailAttempted?: boolean;
 }
 
 export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentInput): Promise<string> {
@@ -205,8 +206,8 @@ export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentI
     driveConnectionId: doc.driveConnectionId,
     md5Checksum: doc.md5Checksum ?? null,
     modifiedTime: doc.modifiedTime ?? null,
-    thumbnailData: doc.thumbnailData ?? null,
-    thumbnailAttemptedAt: doc.thumbnailData ? admin.firestore.FieldValue.serverTimestamp() : null,
+    thumbnailUrl: doc.thumbnailUrl ?? null,
+    thumbnailAttemptedAt: doc.thumbnailAttempted ? admin.firestore.FieldValue.serverTimestamp() : null,
     categoryId: null,
     tagIds: [],
     createdAt: now,
@@ -240,8 +241,8 @@ export async function bulkAddDriveDocumentsAdmin(ownerId: string, documents: Dri
         driveConnectionId: document.driveConnectionId,
         md5Checksum: document.md5Checksum ?? null,
         modifiedTime: document.modifiedTime ?? null,
-        thumbnailData: document.thumbnailData ?? null,
-        thumbnailAttemptedAt: document.thumbnailData ? now : null,
+        thumbnailUrl: document.thumbnailUrl ?? null,
+        thumbnailAttemptedAt: document.thumbnailAttempted ? now : null,
         categoryId: null,
         tagIds: [],
         createdAt: now,

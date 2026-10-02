@@ -5,11 +5,12 @@ import Image from "next/image";
 import { ImageOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
-import { useAuth } from "@/components/auth/AuthProvider";
-import { getSignedDriveUrls } from "@/lib/driveClient";
+import { useSignedDriveThumbnail } from "@/hooks/useSignedDriveThumbnail";
 
 // Re-exported so existing imports (and tests) of these helpers from this module keep working.
 export { signedUrlExpiry, hasExpiredSignedUrl } from "@/lib/signedThumbnailUrl";
+// Shared with the Study Materials cards (documents use the same signed-URL path).
+export { useSignedDriveThumbnail } from "@/hooks/useSignedDriveThumbnail";
 
 /**
  * The one video-thumbnail component.
@@ -224,39 +225,6 @@ export function skipOptimizer(src: string, videoUrl?: string | null): boolean {
     // proxy directly rather than copying them into the image optimizer URL.
     candidates.includes("/api/drive/thumbnail/")
   );
-}
-
-/** Resolves a persisted Drive thumbnail marker to a short-lived signed URL. */
-function useSignedDriveThumbnail(src?: string | null): string | null | undefined {
-  const { user } = useAuth();
-  const [resolved, setResolved] = React.useState(src);
-
-  React.useEffect(() => {
-    if (!src || !src.includes("/api/drive/thumbnail/")) {
-      setResolved(src);
-      return;
-    }
-    if (!user) return;
-    let active = true;
-    setResolved(undefined);
-    const signedRequest = async () => {
-      try {
-        const marker = new URL(src, window.location.origin);
-        const fileId = decodeURIComponent(marker.pathname.split("/").filter(Boolean).pop() || "");
-        const connectionId = marker.searchParams.get("connectionId") || "";
-        if (!fileId || !connectionId) throw new Error("Invalid Drive thumbnail marker.");
-        const idToken = await user.getIdToken();
-        const [signedUrl] = await getSignedDriveUrls(idToken, user.uid, [{ fileId, connectionId, purpose: "thumb" }]);
-        if (active) setResolved(signedUrl);
-      } catch {
-        if (active) setResolved(null);
-      }
-    };
-    void signedRequest();
-    return () => { active = false; };
-  }, [src, user]);
-
-  return resolved;
 }
 
 function clampPercent(value: number | null | undefined): number {

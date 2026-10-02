@@ -17,6 +17,20 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
+/**
+ * Decides whether load() should publish a cached snapshot into React state.
+ * Publishing creates a new snapshot object, which re-renders every consumer, so
+ * it is skipped when the current snapshot already belongs to this user and is
+ * not in a loading state.
+ */
+export function shouldApplyCachedSnapshot(input: {
+  currentUid: string | undefined;
+  currentLoading: boolean;
+  targetUid: string;
+}): boolean {
+  return input.currentUid !== input.targetUid || input.currentLoading;
+}
+
 export function videoKey(video: Pick<VideoWithState, "source" | "playlistId" | "id">): string {
   return `${video.source || "shared"}:${video.playlistId}:${video.id}`;
 }

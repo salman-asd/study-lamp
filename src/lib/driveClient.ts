@@ -74,14 +74,38 @@ interface PendingSignedUrl extends DriveSignedUrlItem {
   reject: (error: Error) => void;
 }
 
+/** One entry of the /api/drive/sign response; `error` marks a per-item failure. */
+interface SignedUrlResponseItem {
+  fileId?: unknown;
+  connectionId?: unknown;
+  purpose?: unknown;
+  url?: unknown;
+  exp?: unknown;
+  error?: unknown;
+}
+
 const signedUrlCache = new Map<string, CachedSignedUrl>();
 const pendingSignedUrls: PendingSignedUrl[] = [];
 const SIGNED_URL_REFRESH_BUFFER_MS = 5 * 60_000;
 const SIGNED_URL_CACHE_MAX_ENTRIES = 500;
-let signFlushQueued = false;
+/** Requests made within this window are sent as ONE /api/drive/sign call.
+ *  (A microtask flushed before most components finished awaiting
+ *  user.getIdToken(), which produced many tiny batches.) */
+const SIGN_FLUSH_DELAY_MS = 25;
+/** Max items per /api/drive/sign request (the server accepts up to 50). */
+const SIGN_BATCH_SIZE = 50;
+let signFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function signedUrlCacheKey(uid: string, item: DriveSignedUrlItem): string {
   return `${uid}:${item.purpose}:${item.connectionId}:${item.fileId}`;
+}
+
+function scheduleSignFlush(delayMs: number): void {
+  if (signFlushTimer) return;
+  signFlushTimer = setTimeout(() => {
+    signFlushTimer = null;
+    void flushSignedUrlQueue();
+  }, delayMs);
 }
 
 function queueSignedUrl(item: DriveSignedUrlItem, uid: string, idToken: string): Promise<string> {
@@ -95,16 +119,35 @@ function queueSignedUrl(item: DriveSignedUrlItem, uid: string, idToken: string):
 
   return new Promise((resolve, reject) => {
     pendingSignedUrls.push({ ...item, uid, idToken, resolve, reject });
-    if (!signFlushQueued) {
-      signFlushQueued = true;
-      queueMicrotask(() => { void flushSignedUrlQueue(); });
+    // A full batch goes out right away; otherwise wait a short window so
+    // concurrent requests share one round trip.
+    if (pendingSignedUrls.length >= SIGN_BATCH_SIZE) {
+      if (signFlushTimer) {
+        clearTimeout(signFlushTimer);
+        signFlushTimer = null;
+      }
+      void flushSignedUrlQueue();
+    } else {
+      scheduleSignFlush(SIGN_FLUSH_DELAY_MS);
     }
   });
 }
 
+function rememberSignedUrl(entryKey: string, signed: CachedSignedUrl): void {
+  signedUrlCache.delete(entryKey);
+  signedUrlCache.set(entryKey, signed);
+  while (signedUrlCache.size > SIGNED_URL_CACHE_MAX_ENTRIES) {
+    const oldestKey = signedUrlCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    signedUrlCache.delete(oldestKey);
+  }
+}
+
 async function flushSignedUrlQueue(): Promise<void> {
-  signFlushQueued = false;
-  const batch = pendingSignedUrls.splice(0, 50);
+  const batch = pendingSignedUrls.splice(0, SIGN_BATCH_SIZE);
+  if (pendingSignedUrls.length) scheduleSignFlush(0);
+  if (batch.length === 0) return;
+
   const byUser = new Map<string, PendingSignedUrl[]>();
   for (const entry of batch) {
     const entries = byUser.get(entry.uid) || [];
@@ -112,45 +155,56 @@ async function flushSignedUrlQueue(): Promise<void> {
     byUser.set(entry.uid, entries);
   }
 
-  await Promise.all(Array.from(byUser.values(), async (entries) => {
-    const first = entries[0];
+  await Promise.all(Array.from(byUser.values(), async (userEntries) => {
+    // Identical requests in the same window share one item in the payload.
+    const byKey = new Map<string, PendingSignedUrl[]>();
+    for (const entry of userEntries) {
+      const key = signedUrlCacheKey(entry.uid, entry);
+      const group = byKey.get(key);
+      if (group) group.push(entry);
+      else byKey.set(key, [entry]);
+    }
+    const groups = Array.from(byKey.entries());
+    const first = userEntries[0];
+
     try {
       const res = await fetch("/api/drive/sign", {
         method: "POST",
         headers: authHeaders(first.idToken, true),
-        body: JSON.stringify({ items: entries.map(({ fileId, connectionId, purpose }) => ({ fileId, connectionId, purpose })) }),
+        body: JSON.stringify({
+          items: groups.map(([, [entry]]) => ({ fileId: entry.fileId, connectionId: entry.connectionId, purpose: entry.purpose })),
+        }),
       });
       const data = await parseOrThrow(res);
-      if (!Array.isArray(data.urls) || data.urls.length !== entries.length) {
+      if (!Array.isArray(data.urls) || data.urls.length !== groups.length) {
         throw new Error("Google Drive returned an incomplete signed URL response.");
       }
 
-      for (let index = 0; index < entries.length; index++) {
-        const signed = data.urls[index] as { url?: unknown; exp?: unknown };
-        if (typeof signed.url !== "string" || typeof signed.exp !== "number") {
-          throw new Error("Google Drive returned an invalid signed URL.");
+      // Each item succeeds or fails on its own; one unowned file must not
+      // reject the thumbnails/streams that were signed fine.
+      groups.forEach(([key, entries], index) => {
+        const signed = data.urls[index] as SignedUrlResponseItem | null;
+        const reference = entries[0];
+        if (
+          !signed || typeof signed !== "object" ||
+          signed.fileId !== reference.fileId || signed.purpose !== reference.purpose
+        ) {
+          entries.forEach((entry) => entry.reject(new Error("Google Drive returned an invalid signed URL.")));
+        } else if (signed.error !== undefined) {
+          const message = signed.error === "not_found" ? "This Drive file wasn't found." : "Couldn't prepare a Drive URL.";
+          entries.forEach((entry) => entry.reject(new Error(message)));
+        } else if (typeof signed.url !== "string" || typeof signed.exp !== "number") {
+          entries.forEach((entry) => entry.reject(new Error("Google Drive returned an invalid signed URL.")));
+        } else {
+          rememberSignedUrl(key, { url: signed.url, exp: signed.exp });
+          entries.forEach((entry) => entry.resolve(signed.url as string));
         }
-        const entry = entries[index];
-        const key = signedUrlCacheKey(entry.uid, entry);
-        signedUrlCache.delete(key);
-        signedUrlCache.set(key, { url: signed.url, exp: signed.exp });
-        while (signedUrlCache.size > SIGNED_URL_CACHE_MAX_ENTRIES) {
-          const oldestKey = signedUrlCache.keys().next().value;
-          if (oldestKey === undefined) break;
-          signedUrlCache.delete(oldestKey);
-        }
-        entry.resolve(signed.url);
-      }
+      });
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error("Couldn't prepare a Drive URL.");
-      entries.forEach((entry) => entry.reject(normalized));
+      userEntries.forEach((entry) => entry.reject(normalized));
     }
   }));
-
-  if (pendingSignedUrls.length && !signFlushQueued) {
-    signFlushQueued = true;
-    queueMicrotask(() => { void flushSignedUrlQueue(); });
-  }
 }
 
 export async function getSignedDriveUrls(

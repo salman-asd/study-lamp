@@ -103,6 +103,51 @@ service cloud.firestore {
         request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null);
     }
 
+    // Field validation shared by create and update of a personal video
+    // (users/{uid}/personalPlaylists/{id}/videos/{id}). Takes the resulting
+    // document so it is only ever evaluated on writes that carry one (never on
+    // delete, where request.resource is null).
+    function validPersonalVideoFields(data) {
+      return optionalString(data, 'title', 500) &&
+        optionalEnum(data, 'status', ['not_started', 'in_progress', 'completed']) &&
+        optionalNumberInRange(data, 'watchedPercentage', 0, 100) &&
+        optionalNumberInRange(data, 'currentPositionSeconds', 0, 1000000000) &&
+        optionalBool(data, 'isFavorite') &&
+        optionalBool(data, 'isWatchLater') &&
+        optionalNullableEnum(data, 'priority', ['high', 'medium', 'low']) &&
+        optionalNumberInRange(data, 'order', 0, 1000000) &&
+        optionalNullableNumberInRange(data, 'durationSeconds', 0, 1000000000) &&
+        // watchLaterOrder / priorityOrder hold either a list index or Date.now().
+        optionalNullableNumberInRange(data, 'watchLaterOrder', 0, 1000000000000000) &&
+        optionalNullableNumberInRange(data, 'priorityOrder', 0, 1000000000000000) &&
+        optionalString(data, 'categoryId', 200) &&
+        optionalString(data, 'driveFileId', 200) &&
+        optionalString(data, 'driveConnectionId', 200) &&
+        // thumbnailData is deprecated (legacy base64). Remove this line once the
+        // thumbnail backfill has migrated every document (roadmap R3).
+        optionalString(data, 'thumbnailData', 40960);
+    }
+
+    // Field validation shared by create and update of a Study Materials
+    // document (users/{uid}/personalDocuments/{id}).
+    function validPersonalDocumentFields(data) {
+      return optionalString(data, 'title', 300) &&
+        optionalEnum(data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
+        optionalString(data, 'mimeType', 200) &&
+        optionalString(data, 'driveFileId', 200) &&
+        optionalString(data, 'driveConnectionId', 200) &&
+        optionalString(data, 'md5Checksum', 100) &&
+        optionalString(data, 'modifiedTime', 100) &&
+        optionalString(data, 'categoryId', 200) &&
+        optionalString(data, 'thumbnailUrl', 500) &&
+        // sizeBytes is written as null when Drive does not report a size.
+        optionalNullableNumberInRange(data, 'sizeBytes', 0, 100000000000) &&
+        validReaderProgress(data) &&
+        // thumbnailData is deprecated (legacy base64). Remove this line once the
+        // thumbnail backfill has migrated every document (roadmap R3).
+        optionalString(data, 'thumbnailData', 40960);
+    }
+
     // ── Sharing state helpers ───────────────────────────────────────────
     function isShareRevoked(data) {
       return ('revokedAt' in data) && data.revokedAt != null;
@@ -284,33 +329,16 @@ service cloud.firestore {
 
         match /videos/{videoId} {
           allow read: if isSelf(uid) || isAdmin();
-          allow create, delete: if (isSelf(uid) || isAdmin()) &&
-            optionalString(request.resource.data, 'title', 500) &&
-            optionalEnum(request.resource.data, 'status', ['not_started', 'in_progress', 'completed']) &&
-            optionalNumberInRange(request.resource.data, 'watchedPercentage', 0, 100) &&
-            optionalNumberInRange(request.resource.data, 'currentPositionSeconds', 0, 1000000000) &&
-            optionalBool(request.resource.data, 'isFavorite') &&
-            optionalBool(request.resource.data, 'isWatchLater') &&
-            optionalNullableEnum(request.resource.data, 'priority', ['high', 'medium', 'low']) &&
-            optionalNumberInRange(request.resource.data, 'order', 0, 1000000) &&
-            optionalString(request.resource.data, 'categoryId', 200) &&
-            optionalString(request.resource.data, 'driveFileId', 200) &&
-            optionalString(request.resource.data, 'driveConnectionId', 200) &&
-            optionalString(request.resource.data, 'thumbnailData', 40960);
+          allow create: if (isSelf(uid) || isAdmin()) &&
+            validPersonalVideoFields(request.resource.data);
 
           allow update: if (isSelf(uid) || isAdmin()) && sameDriveReferences() &&
-            optionalString(request.resource.data, 'title', 500) &&
-            optionalEnum(request.resource.data, 'status', ['not_started', 'in_progress', 'completed']) &&
-            optionalNumberInRange(request.resource.data, 'watchedPercentage', 0, 100) &&
-            optionalNumberInRange(request.resource.data, 'currentPositionSeconds', 0, 1000000000) &&
-            optionalBool(request.resource.data, 'isFavorite') &&
-            optionalBool(request.resource.data, 'isWatchLater') &&
-            optionalNullableEnum(request.resource.data, 'priority', ['high', 'medium', 'low']) &&
-            optionalNumberInRange(request.resource.data, 'order', 0, 1000000) &&
-            optionalString(request.resource.data, 'categoryId', 200) &&
-            optionalString(request.resource.data, 'driveFileId', 200) &&
-            optionalString(request.resource.data, 'driveConnectionId', 200) &&
-            optionalString(request.resource.data, 'thumbnailData', 40960);
+            validPersonalVideoFields(request.resource.data);
+
+          // Delete used to share the create rule, which reads
+          // request.resource.data; that is null on delete, so the rule errored
+          // and every client-side video delete was denied.
+          allow delete: if isSelf(uid) || isAdmin();
 
           match /quiz/{quizDoc} {
             allow read: if isSelf(uid) || isAdmin();
@@ -364,36 +392,28 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // Drive thumbnail bytes ({connectionId}_{fileId}). Server-only: written and
+      // read by the Admin SDK (thumbnail route, import, backfill) so the images
+      // never ride along with video/document documents. See driveThumbnails.ts.
+      match /driveThumbs/{thumbId} {
+        allow read, write: if false;
+      }
+
       // Study Materials (PDFs / Office docs) — Phase 18-19. The file bytes
       // live in Drive; this doc is just metadata + provenance, so the same
       // owner-or-admin + size-guard pattern as personalPlaylists applies.
       match /personalDocuments/{documentId} {
         allow read: if isSelf(uid) || isAdmin();
         allow create: if (isSelf(uid) || isAdmin()) &&
-          optionalString(request.resource.data, 'title', 300) &&
-          optionalEnum(request.resource.data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
-          optionalString(request.resource.data, 'mimeType', 200) &&
-          optionalString(request.resource.data, 'driveFileId', 200) &&
-          optionalString(request.resource.data, 'driveConnectionId', 200) &&
-          optionalString(request.resource.data, 'md5Checksum', 100) &&
-          optionalString(request.resource.data, 'modifiedTime', 100) &&
-          optionalString(request.resource.data, 'categoryId', 200) &&
-          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
-          validReaderProgress(request.resource.data) &&
-          optionalString(request.resource.data, 'thumbnailData', 40960);
+          validPersonalDocumentFields(request.resource.data);
 
         allow update: if (isSelf(uid) || isAdmin()) && sameDriveReferences() &&
-          optionalString(request.resource.data, 'title', 300) &&
-          optionalEnum(request.resource.data, 'fileType', ['pdf', 'docx', 'pptx', 'xlsx']) &&
-          optionalString(request.resource.data, 'mimeType', 200) &&
-          optionalString(request.resource.data, 'driveFileId', 200) &&
-          optionalString(request.resource.data, 'driveConnectionId', 200) &&
-          optionalString(request.resource.data, 'md5Checksum', 100) &&
-          optionalString(request.resource.data, 'modifiedTime', 100) &&
-          optionalString(request.resource.data, 'categoryId', 200) &&
-          optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
-          validReaderProgress(request.resource.data) &&
-          optionalString(request.resource.data, 'thumbnailData', 40960);
+          validPersonalDocumentFields(request.resource.data);
+
+        // Removal goes through DELETE /api/documents/[id] (Admin SDK) so the
+        // quiz/content/annotations subcollections are deleted too; Firestore
+        // does not cascade. Direct owner deletes of the parent are still allowed.
+        allow delete: if isSelf(uid) || isAdmin();
 
         // AI-generated quiz cache, same shape/rules as a video's — written
         // only by server-side Admin SDK code (see src/lib/server/quiz.ts).

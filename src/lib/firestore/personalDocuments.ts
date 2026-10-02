@@ -1,5 +1,5 @@
 import {
-  collection, deleteDoc, doc, getDoc, getDocs, orderBy, query,
+  collection, doc, getDoc, getDocs, orderBy, query,
   serverTimestamp, setDoc, updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -71,9 +71,18 @@ export async function savePersonalDocumentAnnotations(
   }, { merge: true });
 }
 
-export async function deletePersonalDocument(ownerId: string, documentId: string): Promise<void> {
-  // Only removes the Study Lamp record — the underlying Drive file is left
-  // untouched, matching every other Drive-import surface's "we don't own
-  // your Drive" stance.
-  await deleteDoc(doc(db, "users", ownerId, "personalDocuments", documentId));
+export async function deletePersonalDocument(idToken: string, documentId: string): Promise<void> {
+  // Only removes the Study Lamp record (and its quiz/content/annotations
+  // subcollections) — the underlying Drive file is left untouched, matching
+  // every other Drive-import surface's "we don't own your Drive" stance.
+  // Goes through the server because Firestore does not cascade-delete
+  // subcollections and the client rules deny reads/writes on `content`.
+  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { mapWithConcurrency, videoKey } from "./allVideosUtils";
+import { mapWithConcurrency, shouldApplyCachedSnapshot, videoKey } from "./allVideosUtils";
 
 describe("all-videos helpers", () => {
   it("loads items with bounded concurrency while preserving input order", async () => {
@@ -17,6 +17,13 @@ describe("all-videos helpers", () => {
 
     assert.equal(peak, 2);
     assert.deepEqual(results, [0, 2, 4, 6, 8, 10]);
+  });
+
+  it("only publishes a cached snapshot when it would change what is shown", () => {
+    assert.equal(shouldApplyCachedSnapshot({ currentUid: "a", currentLoading: false, targetUid: "a" }), false);
+    assert.equal(shouldApplyCachedSnapshot({ currentUid: "a", currentLoading: true, targetUid: "a" }), true);
+    assert.equal(shouldApplyCachedSnapshot({ currentUid: "b", currentLoading: false, targetUid: "a" }), true);
+    assert.equal(shouldApplyCachedSnapshot({ currentUid: undefined, currentLoading: false, targetUid: "a" }), true);
   });
 
   it("does not collide shared and personal video IDs", () => {
