@@ -60,6 +60,29 @@ export async function generateVideoSummary(
   }
 }
 
+export async function generateDocumentPageExplanation(
+  connection: AiConnectionCredentials,
+  input: { title: string; pageNumber: number; pageText: string },
+): Promise<string> {
+  const prompt = `You are a patient study tutor. Explain the material from page ${input.pageNumber} of "${input.title}" in clear, accessible language.
+Use the provided page text as the only factual source. Define important terms, connect the ideas, and include a short example only when it helps. If the text is fragmentary, say what can and cannot be inferred. Do not invent details from other pages.
+
+Page text:
+${input.pageText}`;
+
+  switch (connection.provider) {
+    case "gemini": return generateWithGemini(connection, prompt);
+    case "openai": return generateWithOpenAi(connection, prompt);
+    case "anthropic": return generateWithAnthropic(connection, prompt);
+    case "openrouter": return generateWithOpenRouter(connection, prompt);
+    case "groq": return generateWithGroq(connection, prompt);
+    default: {
+      const _exhaustive: never = connection.provider;
+      throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
+    }
+  }
+}
+
 export interface RoadmapPlan {
   basic: RoadmapStep[];
   intermediate: RoadmapStep[];

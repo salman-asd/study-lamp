@@ -1,0 +1,63 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { getPersonalDocument } from "@/lib/server/documentContent";
+import { AiServiceError, generateDocumentPageExplanation, type AiErrorCode } from "@/lib/ai/aiService";
+
+interface RouteParams {
+  params: { id: string };
+}
+
+const MAX_PAGE_TEXT_CHARS = 8_000;
+const STATUS_BY_CODE: Record<AiErrorCode, number> = {
+  auth: 400, rate_limit: 429, invalid_request: 502, blocked: 422,
+  timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
+};
+
+export const maxDuration = 60;
+
+export async function POST(req: NextRequest, { params }: RouteParams) {
+  const uid = await requireAuthenticatedUid(req);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const document = await getPersonalDocument(uid, params.id);
+  if (!document) return NextResponse.json({ error: "Document not found." }, { status: 404 });
+  if (document.fileType !== "pdf") return NextResponse.json({ error: "Page explanations are available for PDFs only." }, { status: 422 });
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+  }
+  const values = body as Record<string, unknown>;
+  if (!Number.isSafeInteger(values.pageNumber) || Number(values.pageNumber) < 1) {
+    return NextResponse.json({ error: "pageNumber must be a positive integer." }, { status: 400 });
+  }
+  if (typeof values.pageText !== "string" || !values.pageText.trim()) {
+    return NextResponse.json({ error: "Readable text from the current page is required." }, { status: 400 });
+  }
+  if (values.pageText.length > MAX_PAGE_TEXT_CHARS) {
+    return NextResponse.json({ error: "Page text exceeds the 8,000-character limit." }, { status: 413 });
+  }
+
+  try {
+    const explanation = await withAiConnection(uid, (apiKey, provider, model) => (
+      generateDocumentPageExplanation({ apiKey, provider, model }, {
+        title: document.title,
+        pageNumber: Number(values.pageNumber),
+        pageText: values.pageText as string,
+      })
+    ));
+    return NextResponse.json({ explanation }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    if (error instanceof AiServiceError) {
+      return NextResponse.json({ error: error.message }, { status: STATUS_BY_CODE[error.code] });
+    }
+    console.error("Unexpected error explaining a document page", error);
+    return NextResponse.json({ error: "Couldn't explain this page." }, { status: 500 });
+  }
+}

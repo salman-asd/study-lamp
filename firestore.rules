@@ -66,6 +66,22 @@ service cloud.firestore {
         (data[key] is number && data[key] >= min && data[key] <= max);
     }
 
+    function optionalNullableNumberInRange(data, key, min, max) {
+      return !(key in data) || data[key] == null ||
+        (data[key] is number && data[key] >= min && data[key] <= max);
+    }
+
+    function validReaderProgress(data) {
+      return !('readerProgress' in data) || data.readerProgress == null ||
+        (data.readerProgress is map &&
+          data.readerProgress.keys().hasAll(['lastPage', 'zoom', 'updatedAt']) &&
+          data.readerProgress.lastPage is int &&
+          data.readerProgress.lastPage >= 1 && data.readerProgress.lastPage <= 100000 &&
+          data.readerProgress.zoom is number &&
+          data.readerProgress.zoom >= 0.1 && data.readerProgress.zoom <= 10 &&
+          data.readerProgress.updatedAt is timestamp);
+    }
+
     function optionalBool(data, key) {
       return !(key in data) || data[key] is bool;
     }
@@ -151,7 +167,8 @@ service cloud.firestore {
         allow read: if isSelf(uid) || isAdmin();
         allow create, update: if (isSelf(uid) || isAdmin()) &&
           request.resource.data.content is string &&
-          request.resource.data.content.size() <= 50000;
+          request.resource.data.content.size() <= 50000 &&
+          optionalNullableNumberInRange(request.resource.data, 'pageNumber', 1, 100000);
         allow delete: if isSelf(uid) || isAdmin();
       }
       match /summaries/{videoId} {
@@ -358,8 +375,11 @@ service cloud.firestore {
           optionalString(request.resource.data, 'mimeType', 200) &&
           optionalString(request.resource.data, 'driveFileId', 200) &&
           optionalString(request.resource.data, 'driveConnectionId', 200) &&
+          optionalString(request.resource.data, 'md5Checksum', 100) &&
+          optionalString(request.resource.data, 'modifiedTime', 100) &&
           optionalString(request.resource.data, 'categoryId', 200) &&
           optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
+          validReaderProgress(request.resource.data) &&
           optionalString(request.resource.data, 'thumbnailData', 40960);
 
         allow update: if (isSelf(uid) || isAdmin()) && sameDriveReferences() &&
@@ -368,8 +388,11 @@ service cloud.firestore {
           optionalString(request.resource.data, 'mimeType', 200) &&
           optionalString(request.resource.data, 'driveFileId', 200) &&
           optionalString(request.resource.data, 'driveConnectionId', 200) &&
+          optionalString(request.resource.data, 'md5Checksum', 100) &&
+          optionalString(request.resource.data, 'modifiedTime', 100) &&
           optionalString(request.resource.data, 'categoryId', 200) &&
           optionalNumberInRange(request.resource.data, 'sizeBytes', 0, 100000000000) &&
+          validReaderProgress(request.resource.data) &&
           optionalString(request.resource.data, 'thumbnailData', 40960);
 
         // AI-generated quiz cache, same shape/rules as a video's — written
@@ -377,6 +400,19 @@ service cloud.firestore {
         match /quiz/{quizDoc} {
           allow read: if isSelf(uid) || isAdmin();
           allow write: if false;
+        }
+
+        match /content/{contentDoc} {
+          allow read, write: if false;
+        }
+
+        match /annotations/{annotationDoc} {
+          allow read: if isSelf(uid) && annotationDoc == 'main';
+          allow create, update: if isSelf(uid) && annotationDoc == 'main' &&
+            request.resource.data.annotationsJson is string &&
+            request.resource.data.annotationsJson.size() <= 850000 &&
+            optionalTimestamp(request.resource.data, 'updatedAt');
+          allow delete: if isSelf(uid) && annotationDoc == 'main';
         }
       }
     }

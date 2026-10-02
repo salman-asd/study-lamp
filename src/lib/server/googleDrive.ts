@@ -206,6 +206,8 @@ export interface DriveFileMeta {
   name: string;
   mimeType: string;
   size?: string;
+  md5Checksum?: string;
+  modifiedTime?: string;
   thumbnailLink?: string;
   videoMediaMetadata?: { durationMillis?: string; width?: number; height?: number };
   parents?: string[];
@@ -218,7 +220,7 @@ export class DriveApiError extends Error {
   }
 }
 
-const FILE_FIELDS = "id,name,mimeType,size,thumbnailLink,videoMediaMetadata,parents";
+const FILE_FIELDS = "id,name,mimeType,size,md5Checksum,modifiedTime,thumbnailLink,videoMediaMetadata,parents";
 
 export async function getFileMetadata(accessToken: string, fileId: string): Promise<DriveFileMeta> {
   assertDriveId(fileId);

@@ -161,6 +161,16 @@ export async function getSignedDriveUrls(
   return Promise.all(items.map((item) => queueSignedUrl(item, uid, idToken)));
 }
 
+export async function refreshSignedDriveUrl(
+  idToken: string,
+  uid: string,
+  item: DriveSignedUrlItem,
+): Promise<string> {
+  signedUrlCache.delete(signedUrlCacheKey(uid, item));
+  const [url] = await getSignedDriveUrls(idToken, uid, [item]);
+  return url;
+}
+
 export async function backfillDriveThumbnails(idToken: string): Promise<{ processed: number; remaining: number }> {
   const res = await fetch("/api/drive/thumbnails/backfill", {
     method: "POST",

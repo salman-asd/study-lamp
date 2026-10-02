@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
         sizeBytes: meta.size ? Number(meta.size) : null,
         driveFileId: meta.id,
         driveConnectionId: connectionId,
+        md5Checksum: meta.md5Checksum ?? null,
+        modifiedTime: meta.modifiedTime ?? null,
         ...storedThumbnail,
       });
       return NextResponse.json({ kind: "document", documentId });

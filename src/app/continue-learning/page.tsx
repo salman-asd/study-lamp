@@ -7,11 +7,16 @@ import { AppShell } from "@/components/layout/AppShell";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { ResumeGroupCard, ResumeGroupPanel, ResumeHero } from "@/components/continue/ResumeCards";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAllVideos } from "@/hooks/useAllVideos";
+import { listPersonalDocuments } from "@/lib/firestore/personalDocuments";
 import { buildResumeGroups, summarizeResume, timestampMillis } from "@/lib/resumeGroups";
 import { isResumeEligible } from "@/lib/watchProgress";
+import type { PersonalDocument } from "@/types";
+import { formatDistanceToNowStrict } from "date-fns";
+import { BookOpenText, FileText } from "lucide-react";
 
 export default function ContinueLearningPage() {
   return (
@@ -25,6 +30,23 @@ function ContinueLearningContent() {
   const { user } = useAuth();
   const { loading, videos } = useAllVideos(user?.uid);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
+  const [documents, setDocuments] = React.useState<PersonalDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let active = true;
+    if (!user) return () => { active = false; };
+    void listPersonalDocuments(user.uid).then((items) => {
+      if (!active) return;
+      setDocuments(items.filter((item) => item.fileType === "pdf" && item.readerProgress?.updatedAt)
+        .sort((a, b) => timestampMillis(b.readerProgress?.updatedAt) - timestampMillis(a.readerProgress?.updatedAt)));
+    }).catch(() => {
+      if (active) setDocuments([]);
+    }).finally(() => {
+      if (active) setDocumentsLoading(false);
+    });
+    return () => { active = false; };
+  }, [user]);
 
   // Resume queue: videos with real progress, most recently watched first (ties: furthest along).
   const queue = React.useMemo(
@@ -75,18 +97,48 @@ function ContinueLearningContent() {
           </div>
         )}
 
-        {!loading && queue.length === 0 && (
+        {!loading && !documentsLoading && queue.length === 0 && documents.length === 0 && (
           <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-14 text-center">
             <PlayCircle className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
             <h2 className="mt-3 font-display text-lg font-semibold">Nothing to resume yet</h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Start any video and it shows up here with your exact position saved.
+              Start a video or PDF and it shows up here with your exact position saved.
             </p>
             <Button asChild className="mt-4"><Link href="/playlists">Go to my playlists</Link></Button>
           </div>
         )}
 
         {!loading && hero && <ResumeHero video={hero} />}
+
+        {!documentsLoading && documents.length > 0 && (
+          <section aria-label="Continue reading" className="space-y-4">
+            <h2 className="font-display text-lg font-semibold">Continue Reading</h2>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {documents.map((document) => {
+                const progress = document.readerProgress!;
+                const savedAt = timestampMillis(progress.updatedAt);
+                return (
+                  <Card key={document.id} className="min-w-0">
+                    <CardContent className="flex h-full flex-col gap-3 p-4">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-red-500/10 text-red-600"><FileText className="h-5 w-5" /></div>
+                        <div className="min-w-0 flex-1">
+                          <Link href={`/study-materials/${document.id}`} className="line-clamp-2 font-medium hover:underline">{document.title}</Link>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Page {progress.lastPage}{savedAt ? ` · saved ${formatDistanceToNowStrict(new Date(savedAt))} ago` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <Button asChild size="sm" className="mt-auto w-full gap-2">
+                        <Link href={`/study-materials/${document.id}`}><BookOpenText className="h-4 w-4" />Continue reading</Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {!loading && showGrid && (
           <section aria-label="Playlists in progress" className="space-y-4">

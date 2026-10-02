@@ -24,3 +24,7 @@ export function buildVideoSourceHash(
   }
   return (hash >>> 0).toString(16);
 }
+
+export function hashDocumentText(text: string): string {
+  return buildVideoSourceHash("", null, null, text);
+}

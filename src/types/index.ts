@@ -300,6 +300,7 @@ export interface UserVideoState {
 export interface VideoNote {
   videoId: string;
   content: string;
+  pageNumber?: number | null;
   updatedAt: Timestamp | null;
 }
 
@@ -585,6 +586,11 @@ export interface PersonalDocument {
   thumbnailAttemptedAt?: Timestamp | null;
   categoryId?: string | null;
   tagIds?: string[];
+  readerProgress?: {
+    lastPage: number;
+    zoom: number;
+    updatedAt: Timestamp | null;
+  } | null;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }

@@ -32,9 +32,8 @@ export function DriveImportPanel({
   /** Target playlist for a picked/uploaded *video*. Documents ignore this. */
   playlistId?: string;
   onImported: () => void;
-  /** Restricts the upload <input>'s file picker; Picker itself always shows
-   *  both videos and documents since Google doesn't let us filter by our
-   *  own mime allowlist there. */
+  /** Restricts the upload <input>'s file picker. `kinds` also applies the
+   *  corresponding MIME filter to the Google Picker views. */
   accept?: string;
   /** Study Materials passes false — folder import only knows how to create
    *  a video playlist today (see /api/drive/import/folder), so offering

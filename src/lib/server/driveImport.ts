@@ -1,6 +1,7 @@
 import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import type { PersonalPlaylistSortMode, PersonalPlaylistVisibility, WatchStatus } from "@/types";
+import { assignDriveVideoOrders, dedupeDriveItems } from "@/lib/server/driveImportUtils";
 
 // Server-only, Admin-SDK mirror of the write paths in
 // src/lib/firestore/personalPlaylists.ts. The API routes under
@@ -115,17 +116,65 @@ export async function addDriveVideoAdmin(ownerId: string, playlistId: string, vi
 }
 
 export async function bulkAddDriveVideosAdmin(ownerId: string, playlistId: string, videos: DriveVideoInput[]): Promise<number> {
-  let added = 0;
-  // Sequential, not batched: each call needs its own duplicate + order
-  // lookup, and folder imports are expected to be small enough (a Drive
-  // folder a student organizes by hand) that this isn't a bottleneck. If
-  // that stops being true, revisit with the same chunked-batch approach
-  // bulkAddVideosToPersonalPlaylist uses.
-  for (const video of videos) {
-    await addDriveVideoAdmin(ownerId, playlistId, video);
-    added += 1;
+  if (videos.length === 0) return 0;
+
+  const playlistRef = playlistsCol(ownerId).doc(playlistId);
+  const [existingVideos, playlistSnapshot] = await Promise.all([
+    videosCol(ownerId, playlistId).select("driveFileId").get(),
+    playlistRef.get(),
+  ]);
+  const existingFileIds = existingVideos.docs
+    .map((doc) => doc.get("driveFileId"))
+    .filter((fileId): fileId is string => typeof fileId === "string");
+  const newVideos = dedupeDriveItems(videos, existingFileIds);
+  if (newVideos.length === 0) return 0;
+
+  const orderedVideos = assignDriveVideoOrders(newVideos, existingVideos.size);
+  const videoRefs = orderedVideos.map(({ item }) => videosCol(ownerId, playlistId).doc());
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  for (let offset = 0; offset < orderedVideos.length; offset += 400) {
+    const batch = adminDb.batch();
+    const chunk = orderedVideos.slice(offset, offset + 400);
+    chunk.forEach(({ item: video, order }, index) => {
+      batch.set(videoRefs[offset + index], {
+        title: video.title,
+        videoUrl: video.videoUrl,
+        thumbnailUrl: video.thumbnailUrl,
+        thumbnailData: video.thumbnailData ?? null,
+        thumbnailAttemptedAt: video.thumbnailData ? now : null,
+        durationSeconds: video.durationSeconds ?? 0,
+        platform: "google_drive",
+        driveFileId: video.driveFileId,
+        driveConnectionId: video.driveConnectionId,
+        order,
+        status: "not_started" as WatchStatus,
+        watchedPercentage: 0,
+        currentPositionSeconds: 0,
+        isFavorite: false,
+        isWatchLater: false,
+        priority: null,
+        lastWatchedAt: null,
+        completedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await batch.commit();
   }
-  return added;
+
+  const playlist = playlistSnapshot.data();
+  const currentSortOrder = Array.isArray(playlist?.sortOrder) ? playlist.sortOrder as string[] : [];
+  const durationAdded = newVideos.reduce((total, video) => total + (video.durationSeconds || 0), 0);
+  await playlistRef.update({
+    sortOrder: [...currentSortOrder, ...videoRefs.map((ref) => ref.id)],
+    videoCount: existingVideos.size + newVideos.length,
+    summaryStale: true,
+    totalDurationSeconds: (Number(playlist?.totalDurationSeconds) || 0) + durationAdded,
+    updatedAt: now,
+  });
+
+  return newVideos.length;
 }
 
 export interface DriveDocumentInput {
@@ -135,6 +184,8 @@ export interface DriveDocumentInput {
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;
+  md5Checksum?: string | null;
+  modifiedTime?: string | null;
   thumbnailData?: string | null;
 }
 
@@ -152,6 +203,8 @@ export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentI
     sizeBytes: doc.sizeBytes ?? null,
     driveFileId: doc.driveFileId,
     driveConnectionId: doc.driveConnectionId,
+    md5Checksum: doc.md5Checksum ?? null,
+    modifiedTime: doc.modifiedTime ?? null,
     thumbnailData: doc.thumbnailData ?? null,
     thumbnailAttemptedAt: doc.thumbnailData ? admin.firestore.FieldValue.serverTimestamp() : null,
     categoryId: null,
@@ -160,4 +213,43 @@ export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentI
     updatedAt: now,
   });
   return ref.id;
+}
+
+export async function bulkAddDriveDocumentsAdmin(ownerId: string, documents: DriveDocumentInput[]): Promise<number> {
+  if (documents.length === 0) return 0;
+
+  const documentsCol = adminDb.collection("users").doc(ownerId).collection("personalDocuments");
+  const existingDocuments = await documentsCol.select("driveFileId").get();
+  const existingFileIds = existingDocuments.docs
+    .map((doc) => doc.get("driveFileId"))
+    .filter((fileId): fileId is string => typeof fileId === "string");
+  const newDocuments = dedupeDriveItems(documents, existingFileIds);
+  if (newDocuments.length === 0) return 0;
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const refs = newDocuments.map(() => documentsCol.doc());
+  for (let offset = 0; offset < newDocuments.length; offset += 400) {
+    const batch = adminDb.batch();
+    newDocuments.slice(offset, offset + 400).forEach((document, index) => {
+      batch.set(refs[offset + index], {
+        title: document.title,
+        fileType: document.fileType,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes ?? null,
+        driveFileId: document.driveFileId,
+        driveConnectionId: document.driveConnectionId,
+        md5Checksum: document.md5Checksum ?? null,
+        modifiedTime: document.modifiedTime ?? null,
+        thumbnailData: document.thumbnailData ?? null,
+        thumbnailAttemptedAt: document.thumbnailData ? now : null,
+        categoryId: null,
+        tagIds: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await batch.commit();
+  }
+
+  return newDocuments.length;
 }

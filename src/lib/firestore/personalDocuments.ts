@@ -1,8 +1,9 @@
 import {
   collection, deleteDoc, doc, getDoc, getDocs, orderBy, query,
-  serverTimestamp, updateDoc,
+  serverTimestamp, setDoc, updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { parseDocumentAnnotations, serializeDocumentAnnotations } from "@/lib/documentAnnotations";
 import type { PersonalDocument } from "@/types";
 
 // users/{ownerId}/personalDocuments/{id} — see the PersonalDocument doc
@@ -25,6 +26,49 @@ export async function getPersonalDocumentClient(ownerId: string, documentId: str
 
 export async function renamePersonalDocument(ownerId: string, documentId: string, title: string): Promise<void> {
   await updateDoc(doc(db, "users", ownerId, "personalDocuments", documentId), { title: title.trim(), updatedAt: serverTimestamp() });
+}
+
+export async function updatePersonalDocumentClassification(
+  ownerId: string,
+  documentId: string,
+  classification: { categoryId: string | null; tagIds: string[] },
+): Promise<void> {
+  await updateDoc(doc(db, "users", ownerId, "personalDocuments", documentId), {
+    ...classification,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updatePersonalDocumentReadingProgress(
+  ownerId: string,
+  documentId: string,
+  progress: { lastPage: number; zoom: number },
+): Promise<void> {
+  await updateDoc(doc(db, "users", ownerId, "personalDocuments", documentId), {
+    readerProgress: { ...progress, updatedAt: serverTimestamp() },
+  });
+}
+
+function documentAnnotationsRef(ownerId: string, documentId: string) {
+  return doc(db, "users", ownerId, "personalDocuments", documentId, "annotations", "main");
+}
+
+export async function getPersonalDocumentAnnotations(ownerId: string, documentId: string): Promise<unknown[]> {
+  const snapshot = await getDoc(documentAnnotationsRef(ownerId, documentId));
+  if (!snapshot.exists()) return [];
+  return parseDocumentAnnotations(snapshot.data()?.annotationsJson);
+}
+
+export async function savePersonalDocumentAnnotations(
+  ownerId: string,
+  documentId: string,
+  annotations: unknown[],
+): Promise<void> {
+  const annotationsJson = serializeDocumentAnnotations(annotations);
+  await setDoc(documentAnnotationsRef(ownerId, documentId), {
+    annotationsJson,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export async function deletePersonalDocument(ownerId: string, documentId: string): Promise<void> {

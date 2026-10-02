@@ -4,6 +4,7 @@ import { generateVideoSummary } from "@/lib/ai/aiService";
 import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
+import { ScannedPdfError } from "@/lib/server/documentText";
 
 interface RouteParams {
   params: { id: string };
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     });
     return NextResponse.json({ summary }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
+    if (err instanceof ScannedPdfError) return NextResponse.json({ error: err.message }, { status: 422 });
     if (err instanceof AiServiceError) {
       const status = STATUS_BY_CODE[err.code];
       return NextResponse.json({ error: status >= 500 ? "Something went wrong generating a summary." : err.message }, { status });
