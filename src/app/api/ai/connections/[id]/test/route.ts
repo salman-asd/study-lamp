@@ -19,8 +19,6 @@ interface RouteParams {
 // POST /api/ai/connections/:id/test — decrypts the stored key server-side,
 // makes a lightweight validation call, records the result, and returns only
 // a pass/fail summary. The key itself never leaves this function.
-export const maxDuration = 60;
-
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

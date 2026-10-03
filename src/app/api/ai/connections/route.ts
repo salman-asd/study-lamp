@@ -3,8 +3,6 @@ import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { createConnection, listConnections, validateCreateInput } from "@/lib/server/aiConnections";
 
 // GET /api/ai/connections — list the caller's own connections, masked.
-export const maxDuration = 60;
-
 export async function GET(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

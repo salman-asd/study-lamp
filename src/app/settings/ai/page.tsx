@@ -4,6 +4,7 @@ import * as React from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { useAiLanguageContext } from "@/components/ai/AiLanguageProvider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +85,8 @@ function AiConnectionsContent() {
     }
   }
 
+  const { setDefaultLanguage } = useAiLanguageContext();
+
   async function handleGeneratingLanguageChange(language: "en" | "bn") {
     if (!user) return;
     const previous = aiPreferences;
@@ -91,7 +94,10 @@ function AiConnectionsContent() {
     setSavingPreference(true);
     try {
       const idToken = await user.getIdToken();
-      setAiPreferences(await updateAiPreferences(idToken, { generatingLanguage: language }));
+      const saved = await updateAiPreferences(idToken, { generatingLanguage: language });
+      setAiPreferences(saved);
+      // Pickers that were not manually overridden follow the new default.
+      setDefaultLanguage(saved.generatingLanguage);
     } catch (error: any) {
       setAiPreferences(previous);
       toast.error(error?.message || "Unable to update AI preferences.");
@@ -249,7 +255,7 @@ function AiConnectionsContent() {
           <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
             <div>
               <h2 className="font-display text-base font-semibold">Generating language</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Choose the default language for AI-generated summaries, quizzes, roadmaps, explanations, and suggestions. You can override it for each generation.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Default language for everything the AI generates. You can change it for a single generation next to each Generate button.</p>
             </div>
             <Select
               value={aiPreferences.generatingLanguage}

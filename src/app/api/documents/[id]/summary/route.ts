@@ -26,6 +26,7 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // users/{uid}/summaries collection a video summary uses (key "d_"+documentId
 // instead of the video's id) via the existing client-side notes.ts helpers,
 // exactly like the video page already does for its own summary.
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: RouteParams) {

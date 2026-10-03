@@ -2,6 +2,17 @@ import type { AiProvider } from "@/types";
 
 export type AiLanguage = "en" | "bn";
 
+/** Per-request generation settings. Anything omitted falls back to AI_DEFAULT_OPTIONS. */
+export interface AiGenerateOptions {
+  maxOutputTokens?: number;
+  temperature?: number;
+  /** The reply must be JSON. Providers use their JSON mode where it exists and is safe. */
+  json?: boolean;
+  /** Root of the expected JSON. OpenAI/Groq `json_object` mode only allows an OBJECT root,
+   *  so it is only enabled for "object" (the default); array-rooted replies stay prompt-only there. */
+  jsonRoot?: "object" | "array";
+}
+
 /**
  * Everything an adapter needs to make one request, with the API key already
  * decrypted. Building/loading this from Firestore (Phase 1/2's

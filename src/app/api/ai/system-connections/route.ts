@@ -6,8 +6,6 @@ import {
   validateCreateInput,
 } from "@/lib/server/systemAiConnections";
 
-export const maxDuration = 60;
-
 export async function GET(req: NextRequest) {
   const adminUid = await requireAdminUid(req);
   if (!adminUid) {

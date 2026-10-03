@@ -339,7 +339,7 @@ function RoadmapContent() {
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-accent">Roadmap</p>
           <h1 className="font-display text-3xl font-semibold">Your learning path</h1>
           <p className="text-muted-foreground">Choose a level for each interest and keep a personal, editable roadmap for it.</p>
-          <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || offerGenerating} />
+          <AiLanguagePicker label="Language for AI actions on this page" value={language} onChange={setLanguage} disabled={!languageReady || offerGenerating} />
           <TourChip tourId="roadmap" />
         </div>
 
@@ -792,7 +792,6 @@ function RoadmapPanel({
         <RoadmapEditor
           category={category}
           level={level}
-          language={language}
           roadmap={roadmap}
           onSaveSteps={onSaveSteps}
           onCreateGoal={onCreateGoal}
@@ -985,20 +984,20 @@ function GoalFromStepForm({
 function RoadmapEditor({
   category,
   level,
-  language,
   roadmap,
   onSaveSteps,
   onCreateGoal,
 }: {
   category: Category;
   level: RoadmapLevel;
-  language: AiLanguage;
   roadmap: LearningRoadmap | undefined;
   onSaveSteps: (steps: RoadmapStep[]) => void;
   onCreateGoal: (step: RoadmapStep, index: number, linkedPlaylists: { id: string; title: string }[]) => Promise<void>;
 }) {
   const { user } = useAuth();
   const steps = roadmap?.steps ?? [];
+  // "Suggest goals" has its own picker: it starts on the saved default and overrides only this generation.
+  const { language, setLanguage, languageReady } = useAiLanguage();
 
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
   const [draft, setDraft] = React.useState<{ title: string; description: string; detailsText: string }>({
@@ -1136,9 +1135,10 @@ function RoadmapEditor({
         <Button size="sm" variant="outline" onClick={() => setImportOpen((v) => !v)}>
           <Import className="mr-1 h-3.5 w-3.5" /> Paste / import roadmap
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void suggestGoals()} disabled={goalsLoading || steps.length === 0}>
+        <Button size="sm" variant="outline" onClick={() => void suggestGoals()} disabled={goalsLoading || steps.length === 0 || !languageReady}>
           <Target className="mr-1 h-3.5 w-3.5" /> {goalsLoading ? "Thinking…" : "Suggest goals from this roadmap"}
         </Button>
+        <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || goalsLoading} />
       </div>
 
       {importOpen && (

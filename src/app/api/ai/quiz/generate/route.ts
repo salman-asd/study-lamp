@@ -4,7 +4,7 @@ import { generateVideoQuiz, AiServiceError, type AiErrorCode } from "@/lib/ai/ai
 import { resolveTranscript } from "@/lib/ai/universalTranscript";
 import { getAiPreferences, resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
-import { buildVideoSourceHash } from "@/lib/quizSource";
+import { buildSourceHash } from "@/lib/server/sourceHash";
 import {
   getPersonalVideoQuiz,
   getSharedVideoQuiz,
@@ -26,6 +26,7 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 
 const TRANSCRIPT_MAX_LENGTH = 50000;
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
   // Source hash now includes the transcript (Phase 5) so a changed
   // transcript — a better manual paste, newly-available captions —
   // correctly invalidates a cached quiz instead of serving a stale one.
-  const sourceHash = `${buildVideoSourceHash(title || "", description, summary, transcript)}:${language}`;
+  const sourceHash = buildSourceHash({ kind: "video-quiz", title, description, summary, text: transcript, language });
 
   let cachedQuiz;
   if (ownerId && playlistId && videoId) {

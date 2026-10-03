@@ -126,12 +126,12 @@ describe("parseRoadmapPlanFromText", () => {
 
 describe("withResponseLanguage", () => {
   it("defaults AI prompts to English", () => {
-    assert.match(withResponseLanguage("Generate a summary."), /Respond in English/);
+    assert.match(withResponseLanguage("Generate a summary."), /Write the entire response in English/);
   });
 
   it("requests Bengali learner-facing text while preserving JSON structure", () => {
     const prompt = withResponseLanguage("Return {\"title\":\"string\"}.", "bn");
-    assert.match(prompt, /Respond in Bengali \(Bangla\)/);
-    assert.match(prompt, /Keep JSON keys, IDs, and required structural values unchanged/);
+    assert.match(prompt, /Write the entire response in Bengali \(Bangla/);
+    assert.match(prompt, /Keep JSON keys, IDs and required structural values unchanged/);
   });
 });

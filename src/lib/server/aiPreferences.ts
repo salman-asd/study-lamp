@@ -12,8 +12,17 @@ export function isAiLanguage(value: unknown): value is AiLanguage {
   return value === "en" || value === "bn";
 }
 
-export async function resolveAiLanguage(uid: string, requested: unknown): Promise<AiLanguage | null> {
-  if (requested === undefined) return (await getAiPreferences(uid)).generatingLanguage;
+/**
+ * Language for an AI request: the explicit `language` when the client sends one
+ * (EN/BN), the user's saved default when it is omitted, and null for any other
+ * value (routes answer 400 "language must be en or bn.").
+ */
+export async function resolveAiLanguage(
+  uid: string,
+  requested: unknown,
+  loadPreferences: (uid: string) => Promise<AiPreferences> = getAiPreferences,
+): Promise<AiLanguage | null> {
+  if (requested === undefined) return (await loadPreferences(uid)).generatingLanguage;
   return isAiLanguage(requested) ? requested : null;
 }
 

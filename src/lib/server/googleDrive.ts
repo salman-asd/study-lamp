@@ -240,6 +240,21 @@ export async function listFolderVideoFiles(accessToken: string, folderId: string
   return listFolderFiles(accessToken, folderId, "mimeType contains 'video/'");
 }
 
+/** True when the app can see at least one direct child of the folder (of any type).
+ *  With the narrow drive.file scope a picked folder's children are NOT automatically
+ *  visible, so "zero children" means "ask the user to pick the files" rather than "empty". */
+export async function folderHasVisibleChildren(accessToken: string, folderId: string): Promise<boolean> {
+  assertDriveId(folderId);
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+  const res = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id)&pageSize=1&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 401) throw new DriveApiError(401, "Google Drive rejected the access token.");
+  if (!res.ok) return false;
+  const data = await res.json();
+  return Array.isArray(data.files) && data.files.length > 0;
+}
+
 export async function listFolderDocumentFiles(accessToken: string, folderId: string): Promise<DriveFileMeta[]> {
   const mimeQuery = SUPPORTED_DOCUMENT_MIME_TYPES.map((m) => `mimeType = '${m}'`).join(" or ");
   return listFolderFiles(accessToken, folderId, `(${mimeQuery})`);

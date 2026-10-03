@@ -1,5 +1,6 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 const CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODELS_URL = "https://api.groq.com/openai/v1/models";
@@ -35,7 +36,19 @@ function parseCompletion(body: any): string {
   return text.trim();
 }
 
-export async function generateWithGroq(credentials: AiConnectionCredentials, prompt: string): Promise<string> {
+export function buildGroqRequestBody(credentials: AiConnectionCredentials, prompt: string, options?: AiGenerateOptions) {
+  const settings = resolveAiGenerateOptions(options);
+  return {
+    model: credentials.model,
+    messages: [{ role: "user", content: prompt }],
+    temperature: settings.temperature,
+    max_tokens: settings.maxOutputTokens,
+    // json_object mode only allows an object root; array replies stay prompt-only.
+    ...(settings.json && settings.jsonRoot === "object" ? { response_format: { type: "json_object" } } : {}),
+  };
+}
+
+export async function generateWithGroq(credentials: AiConnectionCredentials, prompt: string, options?: AiGenerateOptions): Promise<string> {
   let res: Response;
   try {
     res = await withTimeout(GENERATE_TIMEOUT_MS, (signal) => fetch(CHAT_COMPLETIONS_URL, {
@@ -45,12 +58,7 @@ export async function generateWithGroq(credentials: AiConnectionCredentials, pro
         Authorization: `Bearer ${credentials.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: credentials.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7,
-        max_tokens: 1800,
-      }),
+      body: JSON.stringify(buildGroqRequestBody(credentials, prompt, options)),
     }));
   } catch (err: any) {
     if (err?.name === "AbortError") throw new AiServiceError("timeout", "Timed out waiting for Groq.");

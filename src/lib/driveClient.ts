@@ -245,16 +245,73 @@ export async function importDriveFile(
   return parseOrThrow(res);
 }
 
+/** Result of importing a folder. `needsSelection` means Google hid the folder's
+ *  children from this app (drive.file scope): reopen the Picker scoped to the folder. */
+export type DriveFolderImportResult =
+  | { playlistId: string; videoCount: number; needsSelection?: undefined }
+  | { needsSelection: true; folderId: string; folderName: string };
+
 export async function importDriveFolder(
   idToken: string,
   input: { connectionId: string; folderId: string }
-): Promise<{ playlistId: string; videoCount: number }> {
+): Promise<DriveFolderImportResult> {
   const res = await fetch("/api/drive/import/folder", {
     method: "POST",
     headers: authHeaders(idToken, true),
     body: JSON.stringify(input),
   });
   return parseOrThrow(res);
+}
+
+export type DriveImportTarget =
+  | { type: "new_playlist"; title?: string }
+  | { type: "existing_playlist"; playlistId: string }
+  | { type: "unsorted" }
+  | { type: "documents" };
+
+export interface DriveBulkImportResult {
+  playlistId?: string;
+  addedVideos: number;
+  addedDocuments: number;
+  skipped: Array<{ fileId: string; reason: string }>;
+  duplicates: number;
+}
+
+/** The server accepts at most this many files per request. */
+export const DRIVE_BULK_IMPORT_MAX_FILES = 200;
+
+/**
+ * One request for a whole multi-select (POST /api/drive/import/files). Selections
+ * above the server's 200-file cap are split into several requests; for a new
+ * playlist the first request creates it and the rest append to it.
+ */
+export async function importDriveFiles(
+  idToken: string,
+  input: { connectionId: string; fileIds: string[]; target: DriveImportTarget }
+): Promise<DriveBulkImportResult> {
+  const total: DriveBulkImportResult = { addedVideos: 0, addedDocuments: 0, skipped: [], duplicates: 0 };
+  let target = input.target;
+  for (let offset = 0; offset < input.fileIds.length; offset += DRIVE_BULK_IMPORT_MAX_FILES) {
+    const res = await fetch("/api/drive/import/files", {
+      method: "POST",
+      headers: authHeaders(idToken, true),
+      body: JSON.stringify({
+        connectionId: input.connectionId,
+        fileIds: input.fileIds.slice(offset, offset + DRIVE_BULK_IMPORT_MAX_FILES),
+        target,
+      }),
+    });
+    const data = await parseOrThrow(res) as DriveBulkImportResult;
+    total.addedVideos += data.addedVideos;
+    total.addedDocuments += data.addedDocuments;
+    total.duplicates += data.duplicates;
+    total.skipped.push(...data.skipped);
+    if (data.playlistId) {
+      total.playlistId = data.playlistId;
+      if (target.type === "new_playlist") target = { type: "existing_playlist", playlistId: data.playlistId };
+    }
+  }
+  return total;
 }
 
 export async function startDriveUploadSession(

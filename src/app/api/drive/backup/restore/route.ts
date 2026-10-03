@@ -12,6 +12,8 @@ import { checkRateLimit } from "@/lib/server/rateLimit";
 // user clicks through a dialog — never silently.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Heavy Drive work; adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);

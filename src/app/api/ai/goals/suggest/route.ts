@@ -17,6 +17,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   unknown: 500,
 };
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {

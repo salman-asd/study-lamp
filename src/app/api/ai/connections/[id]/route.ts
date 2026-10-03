@@ -13,8 +13,6 @@ interface RouteParams {
 // from the verified token, never from the request, and every Firestore path
 // in aiConnections.ts is built as users/{uid}/aiConnections/{id} — there is
 // no code path where a caller's uid can reach another user's document.
-export const maxDuration = 60;
-
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

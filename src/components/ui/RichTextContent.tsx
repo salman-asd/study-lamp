@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { normalizeSummaryContent } from "@/lib/richText";
+import { langAttributeFor } from "@/lib/bengali";
 
 /**
  * Read-only renderer for rich text content (summaries today).
@@ -38,6 +39,8 @@ export function RichTextContent({
 
   return (
     <div
+      // Bengali AI output gets lang="bn" so the Bengali font (--font-bn) is used.
+      lang={langAttributeFor(html)}
       className={cn("rich-text-content text-sm text-foreground", className)}
       // Safe by construction: normalizeSummaryContent routes through
       // sanitizeSummaryHtml, which allowlists only structural tags (p, h1-6,

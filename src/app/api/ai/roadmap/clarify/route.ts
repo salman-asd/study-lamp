@@ -9,6 +9,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
 };
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
     // Clarification is best-effort — never block saving over it.
-    if (err instanceof AiServiceError) console.error(`Clarify AI error [${err.code}]: ${err.message}`);
+    if (err instanceof AiServiceError) console.error(`Clarify AI error [${err.code}]`);
     return NextResponse.json({ ambiguous: false });
   }
 }

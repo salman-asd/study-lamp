@@ -13,6 +13,8 @@ import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
 // Drive file as a PersonalVideo or PersonalDocument.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);

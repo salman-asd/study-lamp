@@ -3,6 +3,7 @@ import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { AiServiceError, generateAiText } from "@/lib/ai/aiService";
+import { AI_OPTIONS } from "@/lib/ai/generateOptions";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 const STATUS_BY_CODE: Record<string, number> = {
@@ -17,6 +18,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   unknown: 500,
 };
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest) {
     }));
     const suggestion = await withAiConnection(uid, async (apiKey, provider, model) => {
       const prompt = `Suggest the correctly spelled learning topic. The learner is choosing a subtopic under "${contextName}".\n\nInput: "${typedValue}"\nKnown subtopics: ${candidateSubtopics.join(", ") || "(none)"}\nExisting main categories: ${candidateCategories.map((c) => c.name).join(", ") || "(none)"}\n\nIf the input is a typo, return the closest known subtopic. If it is a valid new topic, preserve it with normal title casing. Return JSON only in this exact shape:\n{\n  "cleanedName": "string",\n  "isDuplicate": boolean,\n  "matchingCategory": "string or null"\n}`;
-      const text = await generateAiText({ provider, apiKey, model, language }, prompt);
+      const text = await generateAiText({ provider, apiKey, model, language }, prompt, { ...AI_OPTIONS.jsonObject, maxOutputTokens: 400 });
       let parsed: any;
       try {
         parsed = JSON.parse((text.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));

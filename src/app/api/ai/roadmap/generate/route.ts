@@ -13,6 +13,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
 };
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     );
   } catch (err: any) {
     if (err instanceof AiServiceError) {
-      console.error(`Roadmap AI error [${err.code}]: ${err.message}`);
+      console.error(`Roadmap AI error [${err.code}]`);
       return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] ?? 500 });
     }
     console.error("Failed to generate roadmap", err);

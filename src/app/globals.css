@@ -84,6 +84,14 @@
 body {
   @apply bg-background text-foreground font-sans antialiased;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  /* Inter has no Bengali glyphs; the browser falls through per glyph to Noto Sans Bengali (--font-bn). */
+  font-family: var(--font-sans), var(--font-bn), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Explicit Bengali text (lang="bn"): prefer the Bengali font and a little more line height for conjuncts. */
+:lang(bn), .font-bn {
+  font-family: var(--font-bn), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.7;
 }
 
 .font-display { font-family: var(--font-display); }

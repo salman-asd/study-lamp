@@ -15,6 +15,7 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
   timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
 };
 
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: RouteParams) {

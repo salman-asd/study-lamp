@@ -19,8 +19,6 @@ interface RouteParams {
 // If the caller is rotating their key (typing a new one before saving),
 // pass it in the body as `apiKey` and it's used instead of the stored one —
 // same as save behavior already does for a fresh key.
-export const maxDuration = 60;
-
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {

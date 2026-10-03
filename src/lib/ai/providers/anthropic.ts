@@ -1,5 +1,6 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const MODELS_URL = "https://api.anthropic.com/v1/models";
@@ -67,8 +68,10 @@ function headers(apiKey: string): HeadersInit {
 
 export async function generateWithAnthropic(
   credentials: AiConnectionCredentials,
-  prompt: string
+  prompt: string,
+  options?: AiGenerateOptions,
 ): Promise<string> {
+  const settings = resolveAiGenerateOptions(options);
   let res: Response;
   try {
     res = await withTimeout(GENERATE_TIMEOUT_MS, (signal) =>
@@ -78,7 +81,9 @@ export async function generateWithAnthropic(
         headers: headers(credentials.apiKey),
         body: JSON.stringify({
           model: credentials.model,
-          max_tokens: 1800,
+          max_tokens: settings.maxOutputTokens,
+          temperature: settings.temperature,
+          // No JSON mode in the Messages API: JSON stays prompt-driven.
           messages: [{ role: "user", content: prompt }],
         }),
       })

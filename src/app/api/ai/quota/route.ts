@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminUid, requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { getOrInitQuota, setUserQuotaOverride, validateQuotaOverrideInput } from "@/lib/server/aiQuota";
 
-export const maxDuration = 60;
-
 export async function GET(req: NextRequest) {
   const authUid = await requireAuthenticatedUid(req);
   if (!authUid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

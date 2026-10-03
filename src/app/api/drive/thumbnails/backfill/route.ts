@@ -17,6 +17,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Heavy Drive work; adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 const BATCH_SIZE = 25;
 const CONCURRENCY = 5;

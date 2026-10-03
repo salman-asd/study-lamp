@@ -101,7 +101,8 @@ function extractPptxText(buffer: Buffer): string {
 
 function extractXlsxText(buffer: Buffer): string {
   readZipEntries(buffer);
-  const workbook = XLSX.read(buffer, { type: "buffer", cellText: true, cellDates: false });
+  // sheetRows stops parsing each sheet after the cap (+1 so a truncated sheet is detectable) instead of reading the whole workbook first.
+  const workbook = XLSX.read(buffer, { type: "buffer", cellText: true, cellDates: false, sheetRows: MAX_ROWS_PER_SHEET + 1 });
   if (workbook.SheetNames.length === 0) throw new Error("Couldn't find any worksheets in this .xlsx file.");
 
   return workbook.SheetNames.map((name) => {

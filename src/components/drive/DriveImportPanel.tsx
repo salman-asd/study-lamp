@@ -5,12 +5,13 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { DrivePickerButton, type DrivePickerSelection } from "@/components/drive/DrivePickerButton";
+import { DrivePickerButton, openFolderChildrenPicker, type DrivePickerSelection } from "@/components/drive/DrivePickerButton";
 import type { DrivePickerKind } from "@/lib/driveMime";
 import {
-  listDriveConnections, importDriveFile, importDriveFolder,
-  startDriveUploadSession, uploadFileToDrive,
+  listDriveConnections, importDriveFile, importDriveFiles, importDriveFolder,
+  startDriveUploadSession, uploadFileToDrive, type DriveImportTarget,
 } from "@/lib/driveClient";
+import { summarizeBulkImport } from "@/lib/driveImportSummary";
 import type { DriveConnectionSummary } from "@/types";
 import { toast } from "sonner";
 import { UploadCloud } from "lucide-react";
@@ -63,31 +64,66 @@ export function DriveImportPanel({
     })();
   }, [user]);
 
+  /** Where picked FILES go: documents for Study Materials, else the given playlist, else Unsorted. */
+  function fileTarget(): DriveImportTarget {
+    const videoKinds = !kinds || kinds.includes("video");
+    if (!videoKinds) return { type: "documents" };
+    return playlistId ? { type: "existing_playlist", playlistId } : { type: "unsorted" };
+  }
+
+  async function importFilesInOneRequest(idToken: string, fileIds: string[], target: DriveImportTarget) {
+    if (!connectionId || fileIds.length === 0) return;
+    const result = await importDriveFiles(idToken, { connectionId, fileIds, target });
+    const message = summarizeBulkImport(result);
+    if (result.addedVideos + result.addedDocuments > 0) toast.success(message);
+    else toast.info(message);
+  }
+
   async function handlePicked(selections: DrivePickerSelection[] | DrivePickerSelection) {
     const items = Array.isArray(selections) ? selections : [selections];
     if (!user || !connectionId || items.length === 0) return;
     setBusy(true);
     try {
       const idToken = await user.getIdToken();
-      const importedFiles: string[] = [];
-      const importedFolders: string[] = [];
+      const folders = items.filter((selection) => selection.isFolder);
+      const files = items.filter((selection) => !selection.isFolder);
 
-      for (const selection of items) {
-        if (selection.isFolder) {
-          const result = await importDriveFolder(idToken, { connectionId, folderId: selection.id });
-          importedFolders.push(`"${selection.name}" (${result.videoCount} videos)`);
+      // A whole multi-select is ONE bulk request (not one request per file).
+      await importFilesInOneRequest(idToken, files.map((file) => file.id), fileTarget());
+
+      for (const folder of folders) {
+        const result = await importDriveFolder(idToken, { connectionId, folderId: folder.id });
+        if (result.needsSelection) {
+          // Google hides this folder's children from the app: reopen the Picker scoped to it.
+          const { folderId, folderName } = result;
+          toast.info(`Select the files to import from "${folderName}" in the next window.`);
+          await openFolderChildrenPicker({
+            idToken,
+            connectionId,
+            folderId,
+            folderName,
+            kinds: ["video"],
+            onPicked: (picked) => { void importFolderSelection(folderName, picked); },
+          });
         } else {
-          await importDriveFile(idToken, { connectionId, fileId: selection.id, playlistId });
-          importedFiles.push(`"${selection.name}"`);
+          toast.success(`Imported folder "${folder.name}" (${result.videoCount} videos).`);
         }
       }
+      onImported();
+    } catch (error: any) {
+      toast.error(error?.message || "Import from Drive failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      if (importedFolders.length > 0) {
-        toast.success(`Imported folder${importedFolders.length > 1 ? "s" : ""}: ${importedFolders.join(", ")}.`);
-      }
-      if (importedFiles.length > 0) {
-        toast.success(`Imported file${importedFiles.length > 1 ? "s" : ""}: ${importedFiles.join(", ")}.`);
-      }
+  /** Files chosen in the folder-scoped Picker land in a new playlist named after the folder. */
+  async function importFolderSelection(folderName: string, picked: DrivePickerSelection[]) {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      await importFilesInOneRequest(idToken, picked.filter((file) => !file.isFolder).map((file) => file.id), { type: "new_playlist", title: folderName });
       onImported();
     } catch (error: any) {
       toast.error(error?.message || "Import from Drive failed.");
@@ -163,6 +199,12 @@ export function DriveImportPanel({
           onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadFile(file); }}
         />
       </div>
+
+      {allowFolders && (
+        <p className="text-xs text-muted-foreground">
+          Google only shares files you pick. If your folder shows no files, select them in the next window.
+        </p>
+      )}
 
       {uploadPct !== null && (
         <div className="space-y-1">

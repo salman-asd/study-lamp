@@ -12,8 +12,6 @@ import type { AiProvider } from "@/types";
 // For refreshing an *already-saved* connection's models without having the
 // key on hand, see /api/ai/connections/[id]/models instead, which decrypts
 // the stored key server-side.
-export const maxDuration = 60;
-
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) {
@@ -42,10 +40,7 @@ export async function POST(req: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    console.error("Fetch AI models error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Unable to fetch AI models." },
-      { status: 500 }
-    );
+    console.error("Fetch AI models error:", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Unable to fetch AI models." }, { status: 500 });
   }
 }

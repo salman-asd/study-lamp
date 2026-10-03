@@ -1,12 +1,14 @@
 import { AiServiceError } from "./errors";
-import { buildGoalSuggestionPrompt, buildQuizPrompt, buildStarterSummaryPrompt } from "./prompts";
+import { buildGoalSuggestionPrompt, buildQuizPrompt, buildStarterSummaryPrompt, languageInstruction } from "./prompts";
 import { generateWithGemini } from "./providers/gemini";
 import { generateWithOpenAi } from "./providers/openai";
 import { generateWithAnthropic } from "./providers/anthropic";
 import { generateWithOpenRouter } from "./providers/openrouter";
 import { generateWithGroq } from "./providers/groq";
+import { AI_OPTIONS } from "./generateOptions";
 import type {
   AiConnectionCredentials,
+  AiGenerateOptions,
   GoalSuggestion,
   GoalSuggestionInput,
   QuizQuestion,
@@ -32,21 +34,27 @@ import { sanitizeRoadmapStepDetails, sanitizeRoadmapSteps } from "@/lib/roadmapU
  * after the first attempt).
  */
 export function withResponseLanguage(prompt: string, language: "en" | "bn" = "en"): string {
-  const instruction = language === "bn"
-    ? "Respond in Bengali (Bangla). Translate all learner-facing text, including titles, explanations, and examples. Keep JSON keys, IDs, and required structural values unchanged."
-    : "Respond in English. Keep JSON keys, IDs, and required structural values unchanged.";
-  return `${prompt}\n\nResponse language: ${instruction}`;
+  return `${prompt}\n\nResponse language: ${languageInstruction(language)}`;
 }
 
-export async function generateAiText(connection: AiConnectionCredentials, prompt: string): Promise<string> {
+/**
+ * The ONE place a prompt is sent to a provider. It appends the response-language
+ * instruction exactly once, so no feature adds its own language sentence, and
+ * forwards generation options ({ maxOutputTokens, temperature, json }).
+ */
+export async function generateAiText(
+  connection: AiConnectionCredentials,
+  prompt: string,
+  options?: AiGenerateOptions,
+): Promise<string> {
   const localizedPrompt = withResponseLanguage(prompt, connection.language);
 
   switch (connection.provider) {
-    case "gemini": return generateWithGemini(connection, localizedPrompt);
-    case "openai": return generateWithOpenAi(connection, localizedPrompt);
-    case "anthropic": return generateWithAnthropic(connection, localizedPrompt);
-    case "openrouter": return generateWithOpenRouter(connection, localizedPrompt);
-    case "groq": return generateWithGroq(connection, localizedPrompt);
+    case "gemini": return generateWithGemini(connection, localizedPrompt, options);
+    case "openai": return generateWithOpenAi(connection, localizedPrompt, options);
+    case "anthropic": return generateWithAnthropic(connection, localizedPrompt, options);
+    case "openrouter": return generateWithOpenRouter(connection, localizedPrompt, options);
+    case "groq": return generateWithGroq(connection, localizedPrompt, options);
     default: {
       const _exhaustive: never = connection.provider;
       throw new AiServiceError("unsupported_provider", `Provider "${_exhaustive}" is not supported yet.`);
@@ -60,7 +68,7 @@ export async function generateVideoSummary(
 ): Promise<string> {
   const prompt = buildStarterSummaryPrompt(video);
 
-  return generateAiText(connection, prompt);
+  return generateAiText(connection, prompt, AI_OPTIONS.summary);
 }
 
 export async function generateDocumentPageExplanation(
@@ -73,7 +81,7 @@ Use the provided page text as the only factual source. Define important terms, c
 Page text:
 ${input.pageText}`;
 
-  return generateAiText(connection, prompt);
+  return generateAiText(connection, prompt, AI_OPTIONS.summary);
 }
 
 export interface RoadmapPlan {
@@ -176,7 +184,7 @@ export async function generateRoadmapStepsForLevel(
   input: { categoryName: string; level: RoadmapLevel; subtopics: string[] }
 ): Promise<RoadmapStep[]> {
   const prompt = buildRoadmapStepsPrompt(input);
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.roadmapSteps);
   return parseRoadmapStepsFromText(raw);
 }
 
@@ -204,7 +212,7 @@ export function parseTopicClarificationFromText(raw: string): TopicClarification
 
 export async function generateTopicClarification(connection: AiConnectionCredentials, rawName: string): Promise<TopicClarification> {
   const prompt = clarifyTopicPrompt(rawName);
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.jsonObject);
   return parseTopicClarificationFromText(raw);
 }
 
@@ -258,7 +266,7 @@ export async function generateFocusClarification(
   focusText: string
 ): Promise<TopicClarification> {
   const prompt = clarifyFocusPrompt(categoryName, focusText);
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.jsonObject);
   return parseTopicClarificationFromText(raw);
 }
 
@@ -297,7 +305,7 @@ export async function generateRoadmapPlan(
 ): Promise<RoadmapPlan> {
   const prompt = roadmapPrompt(categoryName);
 
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.jsonObject);
 
   return parseRoadmapPlanFromText(raw);
 }
@@ -353,7 +361,7 @@ export async function generateVideoQuiz(
 ): Promise<QuizQuestion[]> {
   const prompt = buildQuizPrompt(video);
 
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.jsonArray);
 
   return parseQuizQuestionsFromText(raw);
 }
@@ -409,7 +417,7 @@ export async function generateGoalSuggestions(
 ): Promise<GoalSuggestion[]> {
   const prompt = buildGoalSuggestionPrompt(input);
 
-  const raw = await generateAiText(connection, prompt);
+  const raw = await generateAiText(connection, prompt, AI_OPTIONS.jsonArray);
 
   return parseGoalSuggestionsFromText(raw);
 }
@@ -418,6 +426,7 @@ export { AiServiceError } from "./errors";
 export type { AiErrorCode } from "./errors";
 export type {
   AiConnectionCredentials,
+  AiGenerateOptions,
   AiLanguage,
   GoalSuggestion,
   GoalSuggestionInput,

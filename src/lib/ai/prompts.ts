@@ -1,5 +1,20 @@
 import type { GoalSuggestionInput, QuizVideoInput, VideoSummaryInput } from "./types";
 
+/**
+ * Version of the prompt wording. Part of every quiz cache hash (see
+ * src/lib/server/sourceHash.ts): BUMP THIS whenever any prompt builder changes
+ * (this file, the roadmap/clarify/explain prompts in aiService.ts, or the
+ * language instruction), so cached AI output is regenerated with the new prompt.
+ */
+export const PROMPT_VERSION = "2026-10-1";
+
+/** The ONE language instruction appended to every AI prompt (see generateAiText). */
+export function languageInstruction(language: "en" | "bn"): string {
+  return language === "bn"
+    ? "Write the entire response in Bengali (Bangla, বাংলা). Keep technical terms, code, formulas and proper nouns in their original form where translating would hurt clarity. Do not translate the source material itself. Keep JSON keys, IDs and required structural values unchanged."
+    : "Write the entire response in English. Keep JSON keys, IDs and required structural values unchanged.";
+}
+
 // Provider-independent: this text is identical no matter which adapter ends
 // up sending it. Adapters (src/lib/ai/providers/*) only know how to deliver
 // a prompt string to their provider and parse a plain-text answer back —

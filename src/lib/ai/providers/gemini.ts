@@ -1,5 +1,6 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 /**
  * Gemini adapter. This is the ONLY file in the codebase that should know:
@@ -94,9 +95,11 @@ function parseGenerateContentResponse(body: any): string {
  */
 export async function generateWithGemini(
   credentials: AiConnectionCredentials,
-  prompt: string
+  prompt: string,
+  options?: AiGenerateOptions,
 ): Promise<string> {
   const url = `${BASE_URL}/${encodeURIComponent(credentials.model)}:generateContent`;
+  const settings = resolveAiGenerateOptions(options);
 
   let res: Response;
   try {
@@ -107,7 +110,12 @@ export async function generateWithGemini(
         headers: { "Content-Type": "application/json", "x-goog-api-key": credentials.apiKey },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 1800 },
+          generationConfig: {
+            temperature: settings.temperature,
+            maxOutputTokens: settings.maxOutputTokens,
+            // Gemini's JSON mode accepts array roots too.
+            ...(settings.json ? { responseMimeType: "application/json" } : {}),
+          },
         }),
       })
     );

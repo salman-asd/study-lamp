@@ -7,6 +7,7 @@ import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 // No AI call here — this just returns the exact prompt text the generate
 // route would send, so a user can copy it, run it in a different AI tool,
 // and paste the reply back in via "Customize" -> paste/import.
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {

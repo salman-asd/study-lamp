@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
-import { getFileMetadata, listFolderVideoFiles, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
+import { folderHasVisibleChildren, getFileMetadata, listFolderVideoFiles, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { createPlaylistAdmin, bulkAddDriveVideosAdmin } from "@/lib/server/driveImport";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
@@ -14,6 +14,8 @@ import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
 // README-drive.md about the AI category-suggestion step this phase skipped.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Imports many files and thumbnails; adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
@@ -34,12 +36,21 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { folderMeta, files } = await withDriveAccessToken(uid, connectionId, async (accessToken) => ({
-      folderMeta: await getFileMetadata(accessToken, folderId),
-      files: await listFolderVideoFiles(accessToken, folderId),
-    }));
+    const { folderMeta, files, hasChildren } = await withDriveAccessToken(uid, connectionId, async (accessToken) => {
+      const folderMeta = await getFileMetadata(accessToken, folderId);
+      const files = await listFolderVideoFiles(accessToken, folderId);
+      // Only needed when no video is visible: distinguishes "folder has other files" from
+      // "the app can't see this folder's children at all".
+      const hasChildren = files.length > 0 ? true : await folderHasVisibleChildren(accessToken, folderId);
+      return { folderMeta, files, hasChildren };
+    });
 
     if (files.length === 0) {
+      if (!hasChildren) {
+        // drive.file only grants access to files the user picked. Nothing is visible, so ask the
+        // client to reopen the Picker scoped to this folder; selecting files there grants access.
+        return NextResponse.json({ needsSelection: true, folderId, folderName: folderMeta.name });
+      }
       return NextResponse.json({ error: `"${folderMeta.name}" doesn't contain any video files.` }, { status: 422 });
     }
 

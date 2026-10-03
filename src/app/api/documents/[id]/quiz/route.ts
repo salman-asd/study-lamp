@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoQuiz, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
-import { buildVideoSourceHash, hashDocumentText } from "@/lib/quizSource";
+import { buildSourceHash } from "@/lib/server/sourceHash";
 import { getDocumentQuiz, saveDocumentQuiz } from "@/lib/server/quiz";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
 import { ScannedPdfError } from "@/lib/server/documentText";
@@ -21,6 +21,7 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // (see quizSource.ts and src/lib/server/quiz.ts's document-specific
 // get/saveDocumentQuiz), same generateVideoQuiz() call — a document's
 // extracted text takes the transcript's place.
+// Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const summary = typeof body.summary === "string" ? body.summary : null;
   try {
     const text = await extractPersonalDocumentText(uid, doc);
-    const sourceHash = `${buildVideoSourceHash(doc.title, null, summary, hashDocumentText(text))}:${language}`;
+    const sourceHash = buildSourceHash({ kind: "document-quiz", title: doc.title, summary, text, language });
     const cached = await getDocumentQuiz(uid, doc.id).catch(() => null);
     if (cached && cached.sourceHash === sourceHash) {
       return NextResponse.json({ questions: cached.questions }, { headers: { "Cache-Control": "private, no-store" } });
