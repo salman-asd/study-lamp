@@ -14,9 +14,10 @@ import { useAllVideos } from "@/hooks/useAllVideos";
 import { listPersonalDocuments } from "@/lib/firestore/personalDocuments";
 import { buildResumeGroups, summarizeResume, timestampMillis } from "@/lib/resumeGroups";
 import { isResumeEligible } from "@/lib/watchProgress";
+import { describeReaderProgress, isMeaningfulProgress } from "@/lib/readerProgress";
 import type { PersonalDocument } from "@/types";
 import { formatDistanceToNowStrict } from "date-fns";
-import { BookOpenText, FileText } from "lucide-react";
+import { BookOpenText, FileSpreadsheet, FileText, FileType2 } from "lucide-react";
 
 export default function ContinueLearningPage() {
   return (
@@ -38,7 +39,9 @@ function ContinueLearningContent() {
     if (!user) return () => { active = false; };
     void listPersonalDocuments(user.uid).then((items) => {
       if (!active) return;
-      setDocuments(items.filter((item) => item.fileType === "pdf" && item.readerProgress?.updatedAt)
+      // PDF, Word and Excel documents with a real saved position (not just "opened at the top").
+      setDocuments(items.filter((item) => (item.fileType === "pdf" || item.fileType === "docx" || item.fileType === "xlsx")
+          && item.readerProgress?.updatedAt && isMeaningfulProgress(item.readerProgress))
         .sort((a, b) => timestampMillis(b.readerProgress?.updatedAt) - timestampMillis(a.readerProgress?.updatedAt)));
     }).catch(() => {
       if (active) setDocuments([]);
@@ -102,7 +105,7 @@ function ContinueLearningContent() {
             <PlayCircle className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
             <h2 className="mt-3 font-display text-lg font-semibold">Nothing to resume yet</h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Start a video or PDF and it shows up here with your exact position saved.
+              Start a video, PDF, Word or Excel file and it shows up here with your exact position saved.
             </p>
             <Button asChild className="mt-4"><Link href="/playlists">Go to my playlists</Link></Button>
           </div>
@@ -117,15 +120,18 @@ function ContinueLearningContent() {
               {documents.map((document) => {
                 const progress = document.readerProgress!;
                 const savedAt = timestampMillis(progress.updatedAt);
+                const fileType = document.fileType === "docx" || document.fileType === "xlsx" ? document.fileType : "pdf";
+                const TypeIcon = fileType === "xlsx" ? FileSpreadsheet : fileType === "docx" ? FileType2 : FileText;
+                const iconTone = fileType === "xlsx" ? "bg-emerald-500/10 text-emerald-600" : fileType === "docx" ? "bg-blue-500/10 text-blue-600" : "bg-red-500/10 text-red-600";
                 return (
                   <Card key={document.id} className="min-w-0">
                     <CardContent className="flex h-full flex-col gap-3 p-4">
                       <div className="flex min-w-0 items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-red-500/10 text-red-600"><FileText className="h-5 w-5" /></div>
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-sm ${iconTone}`}><TypeIcon className="h-5 w-5" aria-hidden /></div>
                         <div className="min-w-0 flex-1">
                           <Link href={`/study-materials/${document.id}`} className="line-clamp-2 font-medium hover:underline">{document.title}</Link>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Page {progress.lastPage}{savedAt ? ` · saved ${formatDistanceToNowStrict(new Date(savedAt))} ago` : ""}
+                            {describeReaderProgress(progress, fileType)}{savedAt ? ` · saved ${formatDistanceToNowStrict(new Date(savedAt))} ago` : ""}
                           </p>
                         </div>
                       </div>

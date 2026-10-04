@@ -8,6 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Download, FileSpreadsheet, Search, Table2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { MAX_XLSX_PREVIEW_BYTES, parseSpreadsheet, readResponseWithLimit, type SpreadsheetSheet } from "@/lib/documentViewerUtils";
+import { createThrottle } from "@/lib/throttle";
+
+const PROGRESS_INTERVAL_MS = 1000;
 
 const ROW_HEIGHT = 38;
 const COLUMN_WIDTH = 180;
@@ -16,12 +19,32 @@ export function XlsxReader({
   title,
   sourceUrl,
   onDownload,
+  initialSheetIndex,
+  initialRowIndex,
+  onProgress,
 }: {
   title: string;
   sourceUrl: string | null;
   onDownload: () => void;
+  /** Saved active sheet (0-based); clamped to the workbook's real sheet count. */
+  initialSheetIndex?: number;
+  /** Saved first visible row (0-based); clamped to the sheet's real row count. */
+  initialRowIndex?: number;
+  /** Throttled to at most one call per second. Not called while a search filter is active. */
+  onProgress?: (progress: { sheetIndex: number; rowIndex: number }) => void;
 }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  // Saved position, seeded once. Later prop changes are ignored.
+  const initialPosition = React.useRef({ sheetIndex: initialSheetIndex, rowIndex: initialRowIndex });
+  const pendingRowRestore = React.useRef<number | null>(null);
+  const reportingReady = React.useRef(false);
+  const onProgressRef = React.useRef(onProgress);
+  onProgressRef.current = onProgress;
+  const progressThrottle = React.useMemo(() => createThrottle<{ sheetIndex: number; rowIndex: number }>(
+    (value) => onProgressRef.current?.(value),
+    PROGRESS_INTERVAL_MS,
+  ), []);
+  React.useEffect(() => () => progressThrottle.flush(), [progressThrottle]);
   const [sheets, setSheets] = React.useState<SpreadsheetSheet[]>([]);
   const [activeSheetIndex, setActiveSheetIndex] = React.useState(0);
   const [query, setQuery] = React.useState("");
@@ -36,6 +59,7 @@ export function XlsxReader({
     setSheets([]);
     setActiveSheetIndex(0);
     setQuery("");
+    reportingReady.current = false;
     if (!sourceUrl) return () => { active = false; };
 
     void (async () => {
@@ -45,7 +69,18 @@ export function XlsxReader({
         const bytes = await readResponseWithLimit(response, MAX_XLSX_PREVIEW_BYTES, "This Excel workbook");
         const parsed = parseSpreadsheet(bytes);
         if (!active) return;
+        // Restore the saved sheet and row, clamped to what this workbook really has.
+        const saved = initialPosition.current;
+        initialPosition.current = { sheetIndex: undefined, rowIndex: undefined };
+        const sheetIndex = typeof saved.sheetIndex === "number" && Number.isFinite(saved.sheetIndex)
+          ? Math.min(Math.max(0, Math.round(saved.sheetIndex)), Math.max(0, parsed.length - 1))
+          : 0;
+        const rowCount = parsed[sheetIndex]?.rows.length ?? 0;
+        pendingRowRestore.current = typeof saved.rowIndex === "number" && Number.isFinite(saved.rowIndex) && rowCount > 0
+          ? Math.min(Math.max(0, Math.round(saved.rowIndex)), rowCount - 1)
+          : null;
         setSheets(parsed);
+        setActiveSheetIndex(sheetIndex);
         setLoading(false);
       } catch (caught) {
         if (!active) return;
@@ -71,6 +106,35 @@ export function XlsxReader({
     overscan: 8,
   });
   const tableWidth = Math.max(activeSheet?.columns.length ?? 1, 1) * COLUMN_WIDTH;
+
+  // Once the sheet is on screen, jump to the saved row, then start reporting.
+  React.useEffect(() => {
+    if (loading || error || !activeSheet) return;
+    const row = pendingRowRestore.current;
+    pendingRowRestore.current = null;
+    if (row !== null && row > 0 && row < visibleRows.length) {
+      virtualizer.scrollToIndex(row, { align: "start" });
+      // Fallback for a virtualizer that has not measured its container yet.
+      requestAnimationFrame(() => {
+        const scroller = scrollRef.current;
+        if (scroller && Math.abs(scroller.scrollTop - row * ROW_HEIGHT) > ROW_HEIGHT) scroller.scrollTop = row * ROW_HEIGHT;
+      });
+    }
+    reportingReady.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, error, activeSheet]);
+
+  function reportPosition(sheetIndex: number, rowIndex: number) {
+    if (!reportingReady.current || normalizedQuery) return; // filtered row numbers don't map to sheet rows
+    progressThrottle.call({ sheetIndex, rowIndex });
+  }
+
+  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+    if (!visibleRows.length) return;
+    // Rows are a fixed height starting at offset 0, so the first visible row is scrollTop / ROW_HEIGHT.
+    const firstVisible = Math.min(visibleRows.length - 1, Math.max(0, Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT)));
+    reportPosition(activeSheetIndex, firstVisible);
+  }
 
   async function copyTsv() {
     if (!activeSheet) return;
@@ -108,7 +172,7 @@ export function XlsxReader({
               role="tab"
               aria-selected={index === activeSheetIndex}
               className={`shrink-0 rounded-sm px-3 py-1.5 text-sm ${index === activeSheetIndex ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}
-              onClick={() => { setActiveSheetIndex(index); if (scrollRef.current) scrollRef.current.scrollTop = 0; }}
+              onClick={() => { setActiveSheetIndex(index); if (scrollRef.current) scrollRef.current.scrollTop = 0; reportPosition(index, 0); }}
             >{sheet.name}</button>
           ))}
         </div>
@@ -123,7 +187,7 @@ export function XlsxReader({
           <Button type="button" size="sm" onClick={onDownload}><Download className="mr-1.5 h-4 w-4" />Download</Button>
         </div>
       ) : activeSheet ? (
-        <div ref={scrollRef} className="h-[68vh] min-h-[26rem] overflow-auto" role="grid" aria-label={`${activeSheet.name} sheet`}>
+        <div ref={scrollRef} onScroll={handleScroll} className="h-[68vh] min-h-[26rem] overflow-auto" role="grid" aria-label={`${activeSheet.name} sheet`}>
           <div className="sticky top-0 z-10 grid border-b border-border bg-muted text-xs font-semibold" role="row" style={{ gridTemplateColumns: `repeat(${activeSheet.columns.length}, minmax(${COLUMN_WIDTH}px, 1fr))`, minWidth: tableWidth }}>
             {activeSheet.columns.map((column, index) => <div key={`${column}-${index}`} className="truncate border-r border-border px-3 py-2.5" role="columnheader" title={column}>{column}</div>)}
           </div>

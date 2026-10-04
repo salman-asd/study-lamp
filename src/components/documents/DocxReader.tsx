@@ -5,28 +5,72 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Download, FileText, Minus, Plus, Printer, Type, ZoomIn } from "lucide-react";
 import { MAX_DOCX_PREVIEW_BYTES, readResponseWithLimit } from "@/lib/documentViewerUtils";
+import { createThrottle } from "@/lib/throttle";
+
+const MIN_ZOOM_PCT = 60;
+const MAX_ZOOM_PCT = 160;
+const PROGRESS_INTERVAL_MS = 1000;
+
+function zoomPctFromFactor(factor: number | undefined): number {
+  if (typeof factor !== "number" || !Number.isFinite(factor)) return 100;
+  return Math.min(MAX_ZOOM_PCT, Math.max(MIN_ZOOM_PCT, Math.round(factor * 100)));
+}
+
+/** 0..1 position of the scroll container (0 when the document fits without scrolling). */
+function readScrollRatio(scroller: Element): number {
+  const range = scroller.scrollHeight - scroller.clientHeight;
+  return range > 0 ? Math.min(1, Math.max(0, scroller.scrollTop / range)) : 0;
+}
 
 export function DocxReader({
   title,
   sourceUrl,
   onDownload,
   onPlainText,
+  initialScrollRatio,
+  initialZoom,
+  onProgress,
 }: {
   title: string;
   sourceUrl: string | null;
   onDownload: () => void;
   onPlainText: () => Promise<string>;
+  /** Saved vertical position (0..1), restored once the document has rendered. */
+  initialScrollRatio?: number;
+  /** Saved zoom as a factor (1 = 100 %). */
+  initialZoom?: number;
+  /** Throttled to at most one call per second. `zoom` is a factor (1 = 100 %). */
+  onProgress?: (progress: { scrollRatio: number; zoom: number }) => void;
 }) {
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
   const documentBytes = React.useRef<ArrayBuffer | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [zoom, setZoom] = React.useState(100);
+  const [zoom, setZoom] = React.useState(() => zoomPctFromFactor(initialZoom));
   const [fitWidth, setFitWidth] = React.useState(true);
   const [plainText, setPlainText] = React.useState<string | null>(null);
   const [loadingText, setLoadingText] = React.useState(false);
   const layoutSettings = React.useRef({ fitWidth, zoom });
   layoutSettings.current = { fitWidth, zoom };
+
+  // Position to restore after the next render. Seeded from the saved value ONCE; later prop changes are ignored.
+  const restoreRatio = React.useRef<number | null>(
+    typeof initialScrollRatio === "number" && Number.isFinite(initialScrollRatio) ? Math.min(1, Math.max(0, initialScrollRatio)) : null,
+  );
+  // False until the saved position was restored, so the initial "top" never overwrites it.
+  const reportingReady = React.useRef(false);
+  const detachScrollListener = React.useRef<(() => void) | null>(null);
+  const onProgressRef = React.useRef(onProgress);
+  onProgressRef.current = onProgress;
+  const progressThrottle = React.useMemo(() => createThrottle<{ scrollRatio: number; zoom: number }>(
+    (value) => onProgressRef.current?.(value),
+    PROGRESS_INTERVAL_MS,
+  ), []);
+  React.useEffect(() => () => {
+    // The page flushes its own pending save on unmount, so hand over the last position first.
+    progressThrottle.flush();
+    detachScrollListener.current?.();
+  }, [progressThrottle]);
 
   const renderDocument = React.useCallback(async (bytes: ArrayBuffer, fit: boolean, zoomPct: number) => {
     const frameDocument = iframeRef.current?.contentDocument;
@@ -64,11 +108,46 @@ export function DocxReader({
       renderFootnotes: true,
       renderEndnotes: true,
     });
-  }, []);
+
+    // The iframe document was replaced, so (re)attach the scroll listener and restore the position.
+    const scroller = frameDocument.scrollingElement ?? frameDocument.documentElement;
+    detachScrollListener.current?.();
+    let touchedByUser = false;
+    const markUser = () => { touchedByUser = true; };
+    const handleScroll = () => {
+      if (!reportingReady.current) return;
+      progressThrottle.call({ scrollRatio: readScrollRatio(scroller), zoom: layoutSettings.current.zoom / 100 });
+    };
+    frameDocument.addEventListener("scroll", handleScroll, { passive: true });
+    frameDocument.addEventListener("wheel", markUser, { passive: true });
+    frameDocument.addEventListener("touchstart", markUser, { passive: true });
+    frameDocument.addEventListener("keydown", markUser);
+    detachScrollListener.current = () => {
+      frameDocument.removeEventListener("scroll", handleScroll);
+      frameDocument.removeEventListener("wheel", markUser);
+      frameDocument.removeEventListener("touchstart", markUser);
+      frameDocument.removeEventListener("keydown", markUser);
+    };
+
+    const ratio = restoreRatio.current;
+    restoreRatio.current = null;
+    const apply = () => {
+      if (ratio === null) return;
+      scroller.scrollTop = ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    };
+    apply();
+    reportingReady.current = true;
+    if (ratio !== null) {
+      // Images and fonts can still change the height right after renderAsync; correct once if the reader hasn't moved yet.
+      requestAnimationFrame(() => { if (!touchedByUser) apply(); });
+      setTimeout(() => { if (!touchedByUser) apply(); }, 300);
+    }
+  }, [progressThrottle]);
 
   React.useEffect(() => {
     let active = true;
     documentBytes.current = null;
+    reportingReady.current = false;
     setPlainText(null);
     setError(null);
     setLoading(true);
@@ -97,9 +176,14 @@ export function DocxReader({
     setFitWidth(nextFit);
     setZoom(nextZoom);
     if (!documentBytes.current) return;
+    // Re-rendering resets the scroll position, so remember where the reader was and put them back.
+    const scroller = iframeRef.current?.contentDocument?.scrollingElement;
+    if (scroller) restoreRatio.current = readScrollRatio(scroller);
+    reportingReady.current = false;
     setLoading(true);
     try {
       await renderDocument(documentBytes.current, nextFit, nextZoom);
+      progressThrottle.call({ scrollRatio: scroller ? readScrollRatio(iframeRef.current?.contentDocument?.scrollingElement ?? scroller) : 0, zoom: nextZoom / 100 });
       setLoading(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't update the Word preview.");

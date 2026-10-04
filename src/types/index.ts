@@ -594,8 +594,16 @@ export interface PersonalDocument {
   categoryId?: string | null;
   tagIds?: string[];
   readerProgress?: {
+    /** PDF page (1-based); always 1 for DOCX/XLSX. */
     lastPage: number;
+    /** Zoom factor 0.1..10. */
     zoom: number;
+    /** DOCX vertical position, 0..1. */
+    scrollRatio?: number;
+    /** XLSX active sheet (0-based). */
+    sheetIndex?: number;
+    /** XLSX first visible data row (0-based). */
+    rowIndex?: number;
     updatedAt: Timestamp | null;
   } | null;
   createdAt: Timestamp | null;

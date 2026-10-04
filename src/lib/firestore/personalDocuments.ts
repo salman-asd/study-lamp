@@ -5,6 +5,7 @@ import {
 import { db } from "@/lib/firebase";
 import { parseDocumentAnnotations, serializeDocumentAnnotations } from "@/lib/documentAnnotations";
 import type { PersonalDocument } from "@/types";
+import { normalizeReaderProgress, type ReaderFileType, type ReaderProgressInput } from "@/lib/readerProgress";
 
 // users/{ownerId}/personalDocuments/{id} — see the PersonalDocument doc
 // comment in src/types/index.ts. Creation happens server-side only, via
@@ -39,13 +40,16 @@ export async function updatePersonalDocumentClassification(
   });
 }
 
+/** Saves the reading position for a PDF, Word or Excel document. The shape is normalised
+ *  (clamped, only the fields that belong to `fileType`) so it always satisfies the Firestore rules. */
 export async function updatePersonalDocumentReadingProgress(
   ownerId: string,
   documentId: string,
-  progress: { lastPage: number; zoom: number },
+  progress: ReaderProgressInput,
+  fileType: ReaderFileType = "pdf",
 ): Promise<void> {
   await updateDoc(doc(db, "users", ownerId, "personalDocuments", documentId), {
-    readerProgress: { ...progress, updatedAt: serverTimestamp() },
+    readerProgress: { ...normalizeReaderProgress(progress, fileType), updatedAt: serverTimestamp() },
   });
 }
 

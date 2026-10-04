@@ -71,10 +71,18 @@ service cloud.firestore {
         (data[key] is number && data[key] >= min && data[key] <= max);
     }
 
+    function optionalIntInRange(data, key, min, max) {
+      return !(key in data) || (data[key] is int && data[key] >= min && data[key] <= max);
+    }
+
     function validReaderProgress(data) {
       return !('readerProgress' in data) || data.readerProgress == null ||
         (data.readerProgress is map &&
           data.readerProgress.keys().hasAll(['lastPage', 'zoom', 'updatedAt']) &&
+          data.readerProgress.keys().hasOnly(['lastPage', 'zoom', 'updatedAt', 'scrollRatio', 'sheetIndex', 'rowIndex']) &&
+          optionalNumberInRange(data.readerProgress, 'scrollRatio', 0, 1) &&
+          optionalIntInRange(data.readerProgress, 'sheetIndex', 0, 200) &&
+          optionalIntInRange(data.readerProgress, 'rowIndex', 0, 1000000) &&
           data.readerProgress.lastPage is int &&
           data.readerProgress.lastPage >= 1 && data.readerProgress.lastPage <= 100000 &&
           data.readerProgress.zoom is number &&

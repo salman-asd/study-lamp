@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
 import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
 import { useAiLanguage } from "@/hooks/useAiLanguage";
+import { mergeReaderProgress, type ReaderProgressInput } from "@/lib/readerProgress";
 import {
   getPersonalDocumentAnnotations,
   getPersonalDocumentClient,
@@ -84,7 +85,7 @@ function StudyMaterialDetailContent() {
   const [mobileStudyOpen, setMobileStudyOpen] = React.useState(false);
   const progressSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const annotationSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingProgress = React.useRef<{ lastPage: number; zoom: number } | null>(null);
+  const pendingProgress = React.useRef<ReaderProgressInput | null>(null);
   const pendingAnnotations = React.useRef<unknown[] | null>(null);
 
   React.useEffect(() => {
@@ -132,33 +133,48 @@ function StudyMaterialDetailContent() {
     return () => { active = false; };
   }, [user, doc]);
 
-  React.useEffect(() => () => {
+  // Sends the pending reading position right now (debounce timer, tab hidden, page closing, unmount).
+  const flushReaderProgress = React.useCallback(() => {
     if (progressSaveTimer.current) {
       clearTimeout(progressSaveTimer.current);
-      if (user && doc && pendingProgress.current) {
-        void updatePersonalDocumentReadingProgress(user.uid, doc.id, pendingProgress.current).catch(() => {});
-      }
+      progressSaveTimer.current = null;
     }
+    const pending = pendingProgress.current;
+    pendingProgress.current = null;
+    if (!pending || !user || !doc) return;
+    void updatePersonalDocumentReadingProgress(user.uid, doc.id, pending, doc.fileType).catch((error) => {
+      toast.error(error?.message || "Couldn't save reading progress.");
+    });
+  }, [user, doc]);
+
+  React.useEffect(() => () => {
+    flushReaderProgress();
     if (annotationSaveTimer.current) {
       clearTimeout(annotationSaveTimer.current);
       if (user && doc && pendingAnnotations.current) {
         void savePersonalDocumentAnnotations(user.uid, doc.id, pendingAnnotations.current).catch(() => {});
       }
     }
-  }, [user, doc]);
+  }, [user, doc, flushReaderProgress]);
 
-  function queueReaderProgress(progress: { lastPage: number; zoom: number }) {
+  // The 2 s debounce would lose the last position when the tab is closed or backgrounded, so flush on those events.
+  React.useEffect(() => {
+    const onPageHide = () => flushReaderProgress();
+    const onVisibility = () => { if (window.document.visibilityState === "hidden") flushReaderProgress(); };
+    window.addEventListener("pagehide", onPageHide);
+    window.document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      window.document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [flushReaderProgress]);
+
+  /** Shared by the PDF, Word and Excel readers; each reports only the fields that belong to its type. */
+  function queueReaderProgress(progress: ReaderProgressInput) {
     if (!user || !doc) return;
-    pendingProgress.current = progress;
+    pendingProgress.current = mergeReaderProgress(pendingProgress.current, progress);
     if (progressSaveTimer.current) clearTimeout(progressSaveTimer.current);
-    progressSaveTimer.current = setTimeout(() => {
-      progressSaveTimer.current = null;
-      const pending = pendingProgress.current;
-      pendingProgress.current = null;
-      if (pending) void updatePersonalDocumentReadingProgress(user.uid, doc.id, pending).catch((error) => {
-        toast.error(error?.message || "Couldn't save PDF reading progress.");
-      });
-    }, 2_000);
+    progressSaveTimer.current = setTimeout(flushReaderProgress, 2_000);
   }
 
   function queueAnnotationSave(nextAnnotations: unknown[]) {
@@ -381,6 +397,8 @@ function StudyMaterialDetailContent() {
                 driveViewUrl={driveViewUrl}
                 onDownload={handleDownload}
                 onPlainText={handlePlainText}
+                progress={doc.readerProgress ?? null}
+                onProgress={queueReaderProgress}
               />
             )}
           </section>
@@ -629,6 +647,8 @@ function DocumentPreview({
   driveViewUrl,
   onDownload,
   onPlainText,
+  progress,
+  onProgress,
 }: {
   document: PersonalDocument;
   sourceUrl: string | null;
@@ -636,14 +656,17 @@ function DocumentPreview({
   driveViewUrl: string;
   onDownload: () => void;
   onPlainText: () => Promise<string>;
+  /** Saved reading position, used only for the initial restore. */
+  progress: PersonalDocument["readerProgress"];
+  onProgress: (progress: ReaderProgressInput) => void;
 }) {
   if (document.fileType === "docx") {
     if (!sourceUrl) return <PreviewUnavailable message={sourceError} onDownload={onDownload} />;
-    return <DocxReader title={document.title} sourceUrl={sourceUrl} onDownload={onDownload} onPlainText={onPlainText} />;
+    return <DocxReader title={document.title} sourceUrl={sourceUrl} onDownload={onDownload} onPlainText={onPlainText} initialScrollRatio={progress?.scrollRatio} initialZoom={progress?.zoom} onProgress={onProgress} />;
   }
   if (document.fileType === "xlsx") {
     if (!sourceUrl) return <PreviewUnavailable message={sourceError} onDownload={onDownload} />;
-    return <XlsxReader title={document.title} sourceUrl={sourceUrl} onDownload={onDownload} />;
+    return <XlsxReader title={document.title} sourceUrl={sourceUrl} onDownload={onDownload} initialSheetIndex={progress?.sheetIndex} initialRowIndex={progress?.rowIndex} onProgress={onProgress} />;
   }
   return (
     <iframe
