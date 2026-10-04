@@ -50,7 +50,7 @@ function VideoPageContent() {
   const router = useRouter();
   const playlistId = searchParams.get("playlist") || "";
   const { user } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
 
   const [playlistVideos, setPlaylistVideos] = React.useState<Video[]>([]);
   const [playlistTitle, setPlaylistTitle] = React.useState<string>("Current playlist");
@@ -176,7 +176,7 @@ function VideoPageContent() {
     try {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
-        language,
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
       });
@@ -197,7 +197,7 @@ function VideoPageContent() {
     try {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
-        language,
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
         videoId,

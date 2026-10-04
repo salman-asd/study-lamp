@@ -57,7 +57,7 @@ function PersonalVideoContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const ownerId = searchParams.get("owner") || user?.uid || "";
   const isViewingOther = ownerId !== user?.uid;
   const autoPlayRequested = searchParams.get("autoplay") === "1";
@@ -181,7 +181,7 @@ function PersonalVideoContent() {
     try {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
-        language,
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
         videoId,
@@ -271,7 +271,7 @@ function PersonalVideoContent() {
     try {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
-        language,
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
       });

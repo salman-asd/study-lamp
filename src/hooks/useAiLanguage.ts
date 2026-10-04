@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useAiLanguageContext } from "@/components/ai/AiLanguageProvider";
-import { isLanguageOverridden, nextOverride, resolveEffectiveLanguage } from "@/lib/aiLanguageState";
+import { isLanguageOverridden, nextOverride, resolveEffectiveLanguage, resolveRequestLanguage } from "@/lib/aiLanguageState";
 import type { AiLanguage } from "@/lib/ai/types";
 
 /**
@@ -14,10 +14,13 @@ import type { AiLanguage } from "@/lib/ai/types";
  * value follows the default if it changes in Settings -> AI.
  */
 export function useAiLanguage() {
-  const { defaultLanguage, ready } = useAiLanguageContext();
+  const { defaultLanguage, ready, loadFailed } = useAiLanguageContext();
   const [override, setOverride] = React.useState<AiLanguage | null>(null);
 
   const language = resolveEffectiveLanguage(defaultLanguage, override);
+  // What to SEND: undefined when the saved default failed to load and nothing was picked,
+  // so the server uses the saved default. The picker keeps showing `language`.
+  const languageForRequest = resolveRequestLanguage({ defaultLanguage, override, loadFailed });
   const setLanguage = React.useCallback((picked: AiLanguage) => {
     setOverride(nextOverride(defaultLanguage, picked));
   }, [defaultLanguage]);
@@ -25,6 +28,7 @@ export function useAiLanguage() {
 
   return {
     language,
+    languageForRequest,
     setLanguage,
     resetToDefault,
     defaultLanguage,

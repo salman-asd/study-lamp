@@ -49,7 +49,7 @@ export default function RoadmapPage() {
 
 function RoadmapContent() {
   const { user } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const searchParams = useSearchParams();
   const [categories, setCategories] = React.useState<Category[]>([]);
   const [interests, setInterests] = React.useState<UserInterest[]>([]);
@@ -188,7 +188,7 @@ function RoadmapContent() {
           level,
           subtopics: matchedInterest?.subtopics ?? [],
           roadmapId: roadmap?.id,
-          language,
+          language: languageForRequest,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -282,7 +282,7 @@ function RoadmapContent() {
       const res = await fetch("/api/ai/roadmap/clarify", {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, kind: "topic", language }),
+        body: JSON.stringify({ name: trimmed, kind: "topic", language: languageForRequest }),
       });
       const result = await res.json().catch(() => ({ ambiguous: false }));
       if (res.ok && result?.ambiguous && result.options?.length) {
@@ -488,7 +488,7 @@ function RoadmapContent() {
                       <FocusEditor
                         categoryName={category.name}
                         currentSubtopics={matchedInterest?.subtopics ?? []}
-                        language={language}
+                        language={languageForRequest}
                         onSave={(subtopics) => saveFocus(category.id, subtopics)}
                       />
                     </div>
@@ -529,7 +529,7 @@ function RoadmapContent() {
                     <RoadmapPanel
                       category={category}
                       level={level}
-                      language={language}
+                      language={languageForRequest}
                       subtopics={matchedInterest?.subtopics ?? []}
                       roadmap={activeRoadmap}
                       onGenerateOrRegenerate={() => generateOrRegenerate(category.id, level, activeRoadmap)}
@@ -557,7 +557,7 @@ function FocusEditor({
 }: {
   categoryName: string;
   currentSubtopics: string[];
-  language: AiLanguage;
+  language: AiLanguage | undefined;
   onSave: (subtopics: string[]) => void;
 }) {
   const { user } = useAuth();
@@ -676,7 +676,7 @@ function RoadmapPanel({
 }: {
   category: Category;
   level: RoadmapLevel;
-  language: AiLanguage;
+  language: AiLanguage | undefined;
   subtopics: string[];
   roadmap: LearningRoadmap | undefined;
   onGenerateOrRegenerate: () => Promise<void>;
@@ -997,7 +997,7 @@ function RoadmapEditor({
   const { user } = useAuth();
   const steps = roadmap?.steps ?? [];
   // "Suggest goals" has its own picker: it starts on the saved default and overrides only this generation.
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
 
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
   const [draft, setDraft] = React.useState<{ title: string; description: string; detailsText: string }>({
@@ -1093,7 +1093,7 @@ function RoadmapEditor({
     try {
       const idToken = await user.getIdToken();
       const suggestions = await suggestGoalsFromRoadmap(idToken, {
-        language,
+        language: languageForRequest,
         categoryName: category.name,
         level,
         steps: steps.map((step) => ({ title: step.title, description: step.description })),

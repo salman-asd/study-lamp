@@ -11,6 +11,9 @@ export interface AiGenerateOptions {
   /** Root of the expected JSON. OpenAI/Groq `json_object` mode only allows an OBJECT root,
    *  so it is only enabled for "object" (the default); array-rooted replies stay prompt-only there. */
   jsonRoot?: "object" | "array";
+  /** Gemini 2.5 counts "thinking" tokens inside maxOutputTokens, so a short budget can come back
+   *  truncated or empty. When true, thinking is switched off for those models. */
+  disableThinking?: boolean;
 }
 
 /**

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isLanguageOverridden, nextOverride, resolveEffectiveLanguage } from "./aiLanguageState";
+import { isLanguageOverridden, nextOverride, resolveEffectiveLanguage, resolveRequestLanguage } from "./aiLanguageState";
 import { isBengaliText, langAttributeFor } from "./bengali";
 import { languageInstruction } from "./ai/prompts";
 import { isAiLanguage, resolveAiLanguage, type AiPreferences } from "./server/aiPreferences";
@@ -65,5 +65,19 @@ describe("Bengali helpers", () => {
     assert.equal(isBengaliText(null), false);
     assert.equal(langAttributeFor("বাংলা"), "bn");
     assert.equal(langAttributeFor("plain"), undefined);
+  });
+});
+
+describe("resolveRequestLanguage", () => {
+  it("sends the effective language when the saved default loaded", () => {
+    assert.equal(resolveRequestLanguage({ defaultLanguage: "bn", override: null, loadFailed: false }), "bn");
+    assert.equal(resolveRequestLanguage({ defaultLanguage: "bn", override: "en", loadFailed: false }), "en");
+  });
+  it("sends nothing when the default failed to load and the user has not chosen, so the server uses the saved default", () => {
+    assert.equal(resolveRequestLanguage({ defaultLanguage: "en", override: null, loadFailed: true }), undefined);
+  });
+  it("still honours a manual pick when the default failed to load", () => {
+    assert.equal(resolveRequestLanguage({ defaultLanguage: "en", override: "bn", loadFailed: true }), "bn");
+    assert.equal(resolveRequestLanguage({ defaultLanguage: "en", override: "en", loadFailed: true }), "en");
   });
 });

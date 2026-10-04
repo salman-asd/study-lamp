@@ -6,6 +6,7 @@ import { checkRateLimit } from "@/lib/server/rateLimit";
 import {
   countLegacyThumbnails,
   countUnattemptedThumbnails,
+  ensureThumbnailAttemptFieldsNormalized,
   fetchAndStoreDriveThumbnail,
   listLegacyThumbnailTargets,
   listUnattemptedThumbnailTargets,
@@ -39,6 +40,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // One-time per user (skipped via users/{uid}.driveThumbsNormalizedAt): make items with a MISSING
+    // thumbnailAttemptedAt field visible to the `== null` queries below.
+    await ensureThumbnailAttemptFieldsNormalized(uid);
+
     const legacy = await listLegacyThumbnailTargets(uid, BATCH_SIZE);
     let fresh: DriveThumbnailTarget[] = [];
     if (legacy.length < BATCH_SIZE) {

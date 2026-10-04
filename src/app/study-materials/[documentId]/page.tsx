@@ -62,7 +62,7 @@ export default function StudyMaterialDetailPage() {
 function StudyMaterialDetailContent() {
   const { documentId } = useParams<{ documentId: string }>();
   const { user } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const [doc, setDoc] = React.useState<PersonalDocument | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [summary, setSummary] = React.useState("");
@@ -223,7 +223,7 @@ function StudyMaterialDetailContent() {
       const response = await fetch(`/api/documents/${documentId}/explain`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ pageNumber, pageText, language }),
+        body: JSON.stringify({ pageNumber, pageText, language: languageForRequest }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Couldn't explain this page.");
@@ -243,7 +243,7 @@ function StudyMaterialDetailContent() {
       const res = await fetch(`/api/documents/${documentId}/summary`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ language }),
+        body: JSON.stringify({ language: languageForRequest }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate a summary.");
@@ -265,7 +265,7 @@ function StudyMaterialDetailContent() {
       const res = await fetch(`/api/documents/${documentId}/quiz`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ summary: summary || null, language }),
+        body: JSON.stringify({ summary: summary || null, language: languageForRequest }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate a quiz.");

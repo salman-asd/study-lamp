@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { RotateCcw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAiLanguageContext } from "@/components/ai/AiLanguageProvider";
@@ -19,10 +20,12 @@ interface AiLanguagePickerProps {
 export function AiLanguagePicker({ value, onChange, disabled, label = "Language" }: AiLanguagePickerProps) {
   const { defaultLanguage } = useAiLanguageContext();
   const overridden = value !== defaultLanguage;
+  // One id per instance: several pickers can be on the same page.
+  const labelId = React.useId();
 
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span id="ai-language-label" className="whitespace-nowrap">{label}</span>
+      <span id={labelId} className="whitespace-nowrap">{label}</span>
       <Select
         value={value}
         onValueChange={(next) => {
@@ -30,7 +33,7 @@ export function AiLanguagePicker({ value, onChange, disabled, label = "Language"
         }}
         disabled={disabled}
       >
-        <SelectTrigger className="h-8 w-44" aria-label={label === "Language" ? "AI response language" : label}>
+        <SelectTrigger className="h-8 w-44" aria-labelledby={labelId} aria-label={label === "Language" ? "AI response language" : label}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

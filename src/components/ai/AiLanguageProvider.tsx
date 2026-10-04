@@ -9,8 +9,10 @@ import { toast } from "sonner";
 interface AiLanguageContextValue {
   /** The saved default (Settings -> AI). English until loaded. */
   defaultLanguage: AiLanguage;
-  /** True once the saved default has been loaded for the signed-in user. */
+  /** True once loading the saved default has finished (successfully or not). */
   ready: boolean;
+  /** True when the saved default could not be loaded: `defaultLanguage` is then only a placeholder. */
+  loadFailed: boolean;
   /** Updates the in-memory default after Settings -> AI saved it. Does NOT call the server. */
   setDefaultLanguage: (language: AiLanguage) => void;
 }
@@ -18,6 +20,7 @@ interface AiLanguageContextValue {
 const AiLanguageContext = React.createContext<AiLanguageContextValue>({
   defaultLanguage: "en",
   ready: false,
+  loadFailed: false,
   setDefaultLanguage: () => undefined,
 });
 
@@ -30,10 +33,12 @@ export function AiLanguageProvider({ children }: { children: React.ReactNode }) 
   const uid = user?.uid;
   const [defaultLanguage, setDefaultLanguage] = React.useState<AiLanguage>("en");
   const [ready, setReady] = React.useState(false);
+  const [loadFailed, setLoadFailed] = React.useState(false);
 
   React.useEffect(() => {
     let active = true;
     setReady(false);
+    setLoadFailed(false);
     if (!user) {
       setDefaultLanguage("en");
       return () => { active = false; };
@@ -45,7 +50,10 @@ export function AiLanguageProvider({ children }: { children: React.ReactNode }) 
         const preferences = await getAiPreferences(idToken);
         if (active) setDefaultLanguage(preferences.generatingLanguage);
       } catch (error) {
-        if (active) toast.error(error instanceof Error ? error.message : "Couldn't load your AI language preference. Using English.");
+        if (active) {
+          setLoadFailed(true);
+          toast.error(error instanceof Error ? error.message : "Couldn't load your AI language preference.");
+        }
       } finally {
         if (active) setReady(true);
       }
@@ -55,7 +63,11 @@ export function AiLanguageProvider({ children }: { children: React.ReactNode }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  const value = React.useMemo(() => ({ defaultLanguage, ready, setDefaultLanguage }), [defaultLanguage, ready]);
+  const setDefault = React.useCallback((language: AiLanguage) => {
+    setDefaultLanguage(language);
+    setLoadFailed(false); // Settings just saved a real value
+  }, []);
+  const value = React.useMemo(() => ({ defaultLanguage, ready, loadFailed, setDefaultLanguage: setDefault }), [defaultLanguage, ready, loadFailed, setDefault]);
   return <AiLanguageContext.Provider value={value}>{children}</AiLanguageContext.Provider>;
 }
 

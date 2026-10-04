@@ -23,7 +23,7 @@ import { trackLearningEvent } from "@/lib/analytics";
 export default function OnboardingPage() {
   const router = useRouter();
   const { user, completeOnboarding } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const [categories, setCategories] = React.useState<Category[]>([]);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [selectedSubtopics, setSelectedSubtopics] = React.useState<Record<string, string[]>>({});
@@ -87,7 +87,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized, language }),
+        body: JSON.stringify({ otherText: validation.normalized, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || "Unable to suggest a category.");
@@ -130,7 +130,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user!.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language }),
+        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       const suggestion = String(payload?.suggestion?.cleanedName ?? "").trim();

@@ -313,6 +313,60 @@ export function countUnattemptedThumbnails(uid: string): Promise<number> {
   return countTargets(uid, unattemptedQuery);
 }
 
+/** True for a Drive-backed doc whose `thumbnailAttemptedAt` field is MISSING (not just null). Pure, for tests. */
+export function needsThumbnailAttemptField(data: Record<string, unknown> | undefined): boolean {
+  return !!data && typeof data.driveFileId === "string" && !("thumbnailAttemptedAt" in data);
+}
+
+const NORMALIZE_PAGE_SIZE = 200;
+
+/**
+ * One-time normalising pass, so the cheap `thumbnailAttemptedAt == null` query below sees EVERY
+ * Drive item.
+ *
+ * Why it exists: Firestore equality queries only match fields that are present, and cannot query
+ * for "field is missing". Items written before `thumbnailAttemptedAt` existed (or by an older
+ * import path) lack the key entirely, so the unattempted list/count would never find them.
+ *
+ * Design: scan every video collection and personalDocuments in pages of 200, fetching only the
+ * three needed fields (select() keeps the read small), and write `thumbnailAttemptedAt: null` to
+ * the ones that have a driveFileId but no such key, in batches. Then stamp
+ * users/{uid}.driveThumbsNormalizedAt so every later call skips the scan with a single document
+ * read. New imports always write the field (null or a timestamp), so nothing goes missing again.
+ */
+export async function ensureThumbnailAttemptFieldsNormalized(uid: string): Promise<void> {
+  const userRef = adminDb.collection("users").doc(uid);
+  const userSnap = await userRef.get();
+  if (userSnap.exists && userSnap.get("driveThumbsNormalizedAt")) return;
+
+  for (const collection of await userMediaCollections(uid)) {
+    let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+    while (true) {
+      let query = collection
+        .orderBy(admin.firestore.FieldPath.documentId())
+        .select("thumbnailAttemptedAt", "thumbnailUrl", "driveFileId")
+        .limit(NORMALIZE_PAGE_SIZE);
+      if (last) query = query.startAfter(last);
+      const page = await query.get();
+      if (page.empty) break;
+
+      const batch = adminDb.batch();
+      let writes = 0;
+      for (const doc of page.docs) {
+        if (needsThumbnailAttemptField(doc.data())) {
+          batch.update(doc.ref, { thumbnailAttemptedAt: null });
+          writes++;
+        }
+      }
+      if (writes > 0) await batch.commit();
+      last = page.docs[page.docs.length - 1];
+      if (page.size < NORMALIZE_PAGE_SIZE) break;
+    }
+  }
+
+  await userRef.set({ driveThumbsNormalizedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+}
+
 /** Moves a legacy base64 thumbnail into driveThumbs and strips it from the document. */
 export async function migrateLegacyThumbnail(uid: string, target: DriveThumbnailTarget): Promise<void> {
   const image = parseLegacyThumbnailDataUrl(target.legacyThumbnailData);

@@ -32,7 +32,7 @@ export default function InterestsSettingsPage() {
 
 function InterestsContent() {
   const { user } = useAuth();
-  const { language, setLanguage, languageReady } = useAiLanguage();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const [loading, setLoading] = React.useState(true);
   const [interestCategories, setInterestCategories] = React.useState<Category[]>([]);
   const [selectedInterestIds, setSelectedInterestIds] = React.useState<string[]>([]);
@@ -144,7 +144,7 @@ function InterestsContent() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user!.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language }),
+        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       const suggestion = String(payload?.suggestion?.cleanedName ?? "").trim();

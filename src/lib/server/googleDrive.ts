@@ -250,7 +250,10 @@ export async function folderHasVisibleChildren(accessToken: string, folderId: st
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (res.status === 401) throw new DriveApiError(401, "Google Drive rejected the access token.");
-  if (!res.ok) return false;
+  // Only 403/404 mean "this app cannot see the folder's contents". A transient 5xx or 429
+  // must NOT look like that, or it would wrongly trigger the Picker fallback.
+  if (res.status === 403 || res.status === 404) return false;
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to check the Drive folder's contents (${res.status}).`);
   const data = await res.json();
   return Array.isArray(data.files) && data.files.length > 0;
 }

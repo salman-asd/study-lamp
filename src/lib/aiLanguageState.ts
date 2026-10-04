@@ -18,6 +18,21 @@ export function nextOverride(defaultLanguage: AiLanguage, picked: AiLanguage): A
   return picked === defaultLanguage ? null : picked;
 }
 
+/**
+ * The `language` to put in an AI request. If the saved default could not be
+ * loaded and the user has not picked a language by hand, send NOTHING, so the
+ * server falls back to the saved default instead of being overridden by the
+ * client's placeholder "en".
+ */
+export function resolveRequestLanguage(input: {
+  defaultLanguage: AiLanguage;
+  override: AiLanguage | null;
+  loadFailed: boolean;
+}): AiLanguage | undefined {
+  if (input.loadFailed && input.override === null) return undefined;
+  return resolveEffectiveLanguage(input.defaultLanguage, input.override);
+}
+
 export function isLanguageOverridden(defaultLanguage: AiLanguage, override: AiLanguage | null): boolean {
   return override !== null && override !== defaultLanguage;
 }
