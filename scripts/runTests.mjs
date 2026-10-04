@@ -13,6 +13,12 @@ function findTestFiles(directory) {
 }
 
 const testFiles = findTestFiles("src");
+if (testFiles.length === 0) {
+  // Without this guard `tsx --test` with no files would run its default discovery and could report a false pass.
+  console.error("No *.test.ts files found under src/.");
+  process.exit(1);
+}
+
 const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
 const result = spawnSync(npxCommand, ["tsx", "--test", ...testFiles], {
   stdio: "inherit",

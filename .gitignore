@@ -1,13 +1,28 @@
-node_modules
-.next
-out
+# dependencies
+node_modules/
+
+# Next.js / Vercel build output
+.next/
+out/
+.vercel/
+next-env.d.ts
+*.tsbuildinfo
+
+# environment files (keep only the example)
 .env
 .env.*
 !.env.example
-.vercel
-.netlify
-.DS_Store
-*.log
+
+# secrets
 *.pem
 service-account*.json
-coverage
+
+# test / coverage output
+coverage/
+
+# logs and OS files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
