@@ -1,16 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { getAiPreferences, isAiLanguage, updateAiPreferences } from "@/lib/server/aiPreferences";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const GET = withAuthedRoute(async ({ uid }) => {
   return NextResponse.json({ preferences: await getAiPreferences(uid) }, { headers: { "Cache-Control": "private, no-store" } });
-}
+});
 
-export async function PATCH(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const PATCH = withAuthedRoute(async ({ uid, req }) => {
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || Object.keys(body).length === 0) {
     return NextResponse.json({ error: "At least one AI preference is required." }, { status: 400 });
@@ -26,4 +22,4 @@ export async function PATCH(req: NextRequest) {
     ...(body.generatingLanguage === undefined ? {} : { generatingLanguage: body.generatingLanguage }),
   });
   return NextResponse.json({ preferences }, { headers: { "Cache-Control": "private, no-store" } });
-}
+});

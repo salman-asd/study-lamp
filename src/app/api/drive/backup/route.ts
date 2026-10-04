@@ -1,26 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { getOrCreateBackupFolder, isValidDriveConnectionId, uploadJsonFile } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
 import { buildBackupPayload } from "@/lib/server/driveBackup";
+import { withAuthedRoute, readJsonObject } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Heavy Drive work; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:backup" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
+export const POST = withAuthedRoute(async ({ uid, req }) => {
+  const parsedBody = await readJsonObject(req);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.body;
   const connectionId = typeof body.connectionId === "string" ? body.connectionId : "";
   if (!isValidDriveConnectionId(connectionId)) return NextResponse.json({ error: "A valid connectionId is required." }, { status: 400 });
 
@@ -51,4 +43,4 @@ export async function POST(req: NextRequest) {
     console.error("Drive backup failed", err);
     return NextResponse.json({ error: "Couldn't back up to Drive." }, { status: 502 });
   }
-}
+}, { scope: "drive:backup" });

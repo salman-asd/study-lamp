@@ -1,9 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { NextResponse } from "next/server";
 import { findOwnedDriveFiles, ownedKey } from "@/lib/server/driveOwnership";
 import { isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { signDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,13 +16,7 @@ interface SignItem {
   purpose: DriveUrlPurpose;
 }
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:sign", preset: "sign" })) {
-    return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-  }
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -72,4 +65,4 @@ export async function POST(req: NextRequest) {
     console.error("Failed to sign Drive URLs", error);
     return NextResponse.json({ error: "Couldn't prepare Drive URLs." }, { status: 500 });
   }
-}
+}, { scope: "drive:sign", preset: "sign" });

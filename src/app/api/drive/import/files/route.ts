@@ -1,5 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { getFileMetadata, isValidDriveConnectionId, isValidDriveId, type DriveFileMeta } from "@/lib/server/googleDrive";
 import {
@@ -14,7 +13,7 @@ import {
 import { partitionDriveFiles, uniqueIds, type DriveSkipReason } from "@/lib/server/driveImportUtils";
 import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
 import { driveThumbnailMarker } from "@/lib/driveThumbnailMarker";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { readJsonObject, withAuthedRoute } from "@/lib/server/routeHelpers";
 import { mapWithConcurrency } from "@/lib/allVideosUtils";
 
 // Bulk import for a multi-select from the Google Picker: ONE request, one
@@ -57,21 +56,10 @@ function parseTarget(value: unknown): ImportTarget | null {
   }
 }
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:import-files", preset: "import" })) {
-    return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-  }
-
-  let body: Record<string, unknown>;
-  try {
-    const parsed = await req.json();
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
-    body = parsed as Record<string, unknown>;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
+export const POST = withAuthedRoute(async ({ uid, req }) => {
+  const parsedBody = await readJsonObject(req);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body: Record<string, unknown> = parsedBody.body;
 
   const connectionId = body.connectionId;
   const rawIds = body.fileIds;
@@ -180,4 +168,4 @@ export async function POST(req: NextRequest) {
     console.error("Drive bulk import failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Couldn't import those files from Drive." }, { status: 502 });
   }
-}
+}, { scope: "drive:import-files", preset: "import" });

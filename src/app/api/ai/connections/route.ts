@@ -1,14 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { createConnection, listConnections, validateCreateInput } from "@/lib/server/aiConnections";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // GET /api/ai/connections — list the caller's own connections, masked.
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuthedRoute(async ({ uid }) => {
   try {
     const connections = await listConnections(uid);
     return NextResponse.json({ connections }, { headers: { "Cache-Control": "private, no-store" } });
@@ -16,15 +11,10 @@ export async function GET(req: NextRequest) {
     console.error("Failed to list AI connections", err);
     return NextResponse.json({ error: "Failed to load connections." }, { status: 500 });
   }
-}
+});
 
 // POST /api/ai/connections — create a connection. Body: { provider, apiKey, model, label }.
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -49,4 +39,4 @@ export async function POST(req: NextRequest) {
     console.error("Failed to create AI connection", err);
     return NextResponse.json({ error: "Failed to save connection." }, { status: 500 });
   }
-}
+});

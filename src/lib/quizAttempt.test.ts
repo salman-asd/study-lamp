@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { validateQuizAttemptInput } from "./quizAttempt";
+import { buildQuizAttemptBody, validateQuizAttemptInput } from "./quizAttempt";
 
 const validAttempt = {
   videoId: "video-1",
@@ -49,5 +49,34 @@ describe("validateQuizAttemptInput", () => {
       ...validAttempt,
       answers: [{ questionId: "q", chosenOptionId: "a".repeat(51), wasCorrect: true }],
     }).ok, false);
+  });
+});
+describe("buildQuizAttemptBody", () => {
+  const questions = [
+    { id: "q1", correctOptionId: "a" },
+    { id: "q2", correctOptionId: "b" },
+    { id: "q3", correctOptionId: "c" },
+  ];
+
+  it("derives answers from the questions and marks unanswered ones as wrong", () => {
+    const body = buildQuizAttemptBody({
+      videoId: "v1", categoryId: "cat", playlistId: "pl", source: "personal",
+      score: 1, totalQuestions: 3, questions, selectedAnswers: { q1: "a", q2: "x" },
+    });
+    assert.deepEqual(body.answers, [
+      { questionId: "q1", chosenOptionId: "a", wasCorrect: true },
+      { questionId: "q2", chosenOptionId: "x", wasCorrect: false },
+      { questionId: "q3", chosenOptionId: "", wasCorrect: false },
+    ]);
+    assert.equal(body.videoId, "v1");
+    assert.equal(body.source, "personal");
+  });
+
+  it("produces a body the server validator accepts, and omits undefined optional fields when serialised", () => {
+    const body = buildQuizAttemptBody({
+      videoId: "d_doc1", source: "document", score: 3, totalQuestions: 3, questions, selectedAnswers: { q1: "a", q2: "b", q3: "c" },
+    });
+    assert.equal(validateQuizAttemptInput(JSON.parse(JSON.stringify(body))).ok, true);
+    assert.equal("categoryId" in JSON.parse(JSON.stringify(body)), false);
   });
 });

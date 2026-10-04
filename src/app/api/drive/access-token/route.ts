@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { getAccessTokenForConnection, DriveConnectionError } from "@/lib/server/driveConnections";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // Returns a short-lived (~1hr) Drive access token, scoped to drive.file, for
 // client-side use by the Google Picker only (Phase 14) — the Picker widget
@@ -13,11 +12,7 @@ import { checkRateLimit } from "@/lib/server/rateLimit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:access-token" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-
+export const GET = withAuthedRoute(async ({ uid, req }) => {
   const connectionId = req.nextUrl.searchParams.get("connectionId");
   if (!isValidDriveConnectionId(connectionId)) return NextResponse.json({ error: "A valid connectionId is required." }, { status: 400 });
 
@@ -31,4 +26,4 @@ export async function GET(req: NextRequest) {
     console.error("Failed to mint Drive access token", err);
     return NextResponse.json({ error: "Couldn't reach Google Drive." }, { status: 502 });
   }
-}
+}, { scope: "drive:access-token" });

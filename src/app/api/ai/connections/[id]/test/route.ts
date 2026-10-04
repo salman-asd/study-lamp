@@ -1,5 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { getConnectionRaw, recordTestResult } from "@/lib/server/aiConnections";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { validateGeminiConnection } from "@/lib/ai/providers/gemini";
@@ -7,6 +6,7 @@ import { validateOpenAiConnection } from "@/lib/ai/providers/openai";
 import { validateAnthropicConnection } from "@/lib/ai/providers/anthropic";
 import { validateOpenRouterConnection } from "@/lib/ai/providers/openrouter";
 import { validateGroqConnection } from "@/lib/ai/providers/groq";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
@@ -19,12 +19,7 @@ interface RouteParams {
 // POST /api/ai/connections/:id/test — decrypts the stored key server-side,
 // makes a lightweight validation call, records the result, and returns only
 // a pass/fail summary. The key itself never leaves this function.
-export async function POST(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, params }) => {
   const connection = await getConnectionRaw(uid, params.id);
   if (!connection) {
     return NextResponse.json({ error: "Connection not found." }, { status: 404 });
@@ -65,4 +60,4 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     { success: result.ok, message: result.message },
     { headers: { "Cache-Control": "private, no-store" } }
   );
-}
+});

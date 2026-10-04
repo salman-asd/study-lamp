@@ -25,7 +25,7 @@ import { deleteNote, getNote, getSummary, saveNote, saveSummary } from "@/lib/fi
 import { getTranscript, saveTranscript } from "@/lib/firestore/transcripts";
 import { addBookmark, listBookmarks, removeBookmark } from "@/lib/firestore/bookmarks";
 import { generateStarterSummary } from "@/lib/aiSummaryClient";
-import { generateVideoQuizForCurrentVideo } from "@/lib/quizClient";
+import { generateVideoQuizForCurrentVideo, submitQuizAttempt } from "@/lib/quizClient";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { formatDuration } from "@/lib/utils";
 import { toSummaryHtml } from "@/lib/summaryHtml";
@@ -229,32 +229,16 @@ function VideoPageContent() {
     setQuizResult({ score, total });
     setQuizSubmitted(true);
 
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch("/api/quiz-attempts", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          videoId: video.id,
-          categoryId: video.categoryId || undefined,
-          playlistId,
-          source: "shared",
-          score,
-          totalQuestions: total,
-          answers: quizQuestions.map((question) => ({
-            questionId: question.id,
-            chosenOptionId: selectedAnswers[question.id] || "",
-            wasCorrect: selectedAnswers[question.id] === question.correctOptionId,
-          })),
-        }),
-      });
-      if (!response.ok) toast.error("Couldn't save your quiz result");
-    } catch {
-      toast.error("Couldn't save your quiz result");
-    }
+    await submitQuizAttempt(user, {
+      videoId: video.id,
+      categoryId: video.categoryId || undefined,
+      playlistId,
+      source: "shared",
+      score,
+      totalQuestions: total,
+      questions: quizQuestions,
+      selectedAnswers,
+    });
   }
 
   const index = playlistVideos.findIndex((v) => v.id === videoId);

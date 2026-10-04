@@ -1,29 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { generateVideoSummary, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
+import { NextResponse } from "next/server";
+import { generateVideoSummary } from "@/lib/ai/aiService";
 import { resolveTranscript } from "@/lib/ai/universalTranscript";
 import { getAiPreferences, resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { aiErrorResponse, withAuthedRoute } from "@/lib/server/routeHelpers";
 
 const TRANSCRIPT_MAX_LENGTH = 50000;
 
 const TITLE_MAX_LENGTH = 300;
 const DESCRIPTION_MAX_LENGTH = 5000;
-
-// HTTP status per AiServiceError code. Kept local to this route rather than
-// in the AI service itself — the service is meant to be usable outside an
-// HTTP context too, so it shouldn't know about status codes.
-const STATUS_BY_CODE: Record<AiErrorCode, number> = {
-  auth: 400,
-  rate_limit: 429,
-  invalid_request: 502,
-  blocked: 422,
-  timeout: 504,
-  network: 502,
-  server_error: 502,
-  unsupported_provider: 400,
-  unknown: 500,
-};
 
 // POST /api/ai/summary — generate a transcript-backed summary draft.
 // Body: { title, description?, youtubeVideoId?, manualTranscript? }.
@@ -40,12 +25,7 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -108,10 +88,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ summary }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    if (err instanceof AiServiceError) {
-      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] });
-    }
-    console.error("Unexpected error generating AI summary", err);
-    return NextResponse.json({ error: "Something went wrong generating a summary." }, { status: 500 });
+    return aiErrorResponse(err, { fallbackMessage: "Something went wrong generating a summary.", logLabel: "Unexpected error generating AI summary" });
   }
-}
+});

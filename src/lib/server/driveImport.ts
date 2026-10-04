@@ -1,7 +1,8 @@
 import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import type { PersonalPlaylistSortMode, PersonalPlaylistVisibility, WatchStatus } from "@/types";
-import { assignDriveVideoOrders, chunkForBatches, dedupeDriveItems } from "@/lib/server/driveImportUtils";
+import { assignDriveVideoOrders, dedupeDriveItems } from "@/lib/server/driveImportUtils";
+import { batchInsert } from "@/lib/server/batchInsert";
 
 // Server-only, Admin-SDK mirror of the write paths in
 // src/lib/firestore/personalPlaylists.ts. The API routes under
@@ -185,45 +186,33 @@ export async function bulkAddDriveVideosWithStats(ownerId: string, playlistId: s
     updatedAt: now,
   };
 
-  const chunks = chunkForBatches(orderedVideos);
-  const committed: FirebaseFirestore.DocumentReference[] = [];
-  let offset = 0;
-  try {
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-      const batch = adminDb.batch();
-      const chunk = chunks[chunkIndex];
-      chunk.forEach(({ item: video, order }, index) => {
-        batch.set(videoRefs[offset + index], {
-          title: video.title,
-          videoUrl: video.videoUrl,
-          thumbnailUrl: video.thumbnailUrl,
-          thumbnailAttemptedAt: video.thumbnailAttempted ? now : null,
-          durationSeconds: video.durationSeconds ?? 0,
-          platform: "google_drive",
-          driveFileId: video.driveFileId,
-          driveConnectionId: video.driveConnectionId,
-          order,
-          status: "not_started" as WatchStatus,
-          watchedPercentage: 0,
-          currentPositionSeconds: 0,
-          isFavorite: false,
-          isWatchLater: false,
-          priority: null,
-          lastWatchedAt: null,
-          completedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        });
-      });
-      if (chunkIndex === chunks.length - 1) batch.update(playlistRef, playlistUpdate);
-      await batch.commit();
-      committed.push(...videoRefs.slice(offset, offset + chunk.length));
-      offset += chunk.length;
-    }
-  } catch (error) {
-    await Promise.allSettled(committed.map((ref) => ref.delete()));
-    throw error;
-  }
+  await batchInsert(
+    adminDb,
+    orderedVideos,
+    videoRefs,
+    ({ item: video, order }) => ({
+      title: video.title,
+      videoUrl: video.videoUrl,
+      thumbnailUrl: video.thumbnailUrl,
+      thumbnailAttemptedAt: video.thumbnailAttempted ? now : null,
+      durationSeconds: video.durationSeconds ?? 0,
+      platform: "google_drive",
+      driveFileId: video.driveFileId,
+      driveConnectionId: video.driveConnectionId,
+      order,
+      status: "not_started" as WatchStatus,
+      watchedPercentage: 0,
+      currentPositionSeconds: 0,
+      isFavorite: false,
+      isWatchLater: false,
+      priority: null,
+      lastWatchedAt: null,
+      completedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    { lastBatchUpdate: { ref: playlistRef, data: playlistUpdate }, rollback: true },
+  );
 
   return { added: newVideos.length, duplicates };
 }
@@ -284,30 +273,22 @@ export async function bulkAddDriveDocumentsWithStats(ownerId: string, documents:
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   const refs = newDocuments.map(() => documentsCol.doc());
-  let offset = 0;
-  for (const chunk of chunkForBatches(newDocuments, 400, 0)) {
-    const batch = adminDb.batch();
-    chunk.forEach((document, index) => {
-      batch.set(refs[offset + index], {
-        title: document.title,
-        fileType: document.fileType,
-        mimeType: document.mimeType,
-        sizeBytes: document.sizeBytes ?? null,
-        driveFileId: document.driveFileId,
-        driveConnectionId: document.driveConnectionId,
-        md5Checksum: document.md5Checksum ?? null,
-        modifiedTime: document.modifiedTime ?? null,
-        thumbnailUrl: document.thumbnailUrl ?? null,
-        thumbnailAttemptedAt: document.thumbnailAttempted ? now : null,
-        categoryId: null,
-        tagIds: [],
-        createdAt: now,
-        updatedAt: now,
-      });
-    });
-    await batch.commit();
-    offset += chunk.length;
-  }
+  await batchInsert(adminDb, newDocuments, refs, (document) => ({
+    title: document.title,
+    fileType: document.fileType,
+    mimeType: document.mimeType,
+    sizeBytes: document.sizeBytes ?? null,
+    driveFileId: document.driveFileId,
+    driveConnectionId: document.driveConnectionId,
+    md5Checksum: document.md5Checksum ?? null,
+    modifiedTime: document.modifiedTime ?? null,
+    thumbnailUrl: document.thumbnailUrl ?? null,
+    thumbnailAttemptedAt: document.thumbnailAttempted ? now : null,
+    categoryId: null,
+    tagIds: [],
+    createdAt: now,
+    updatedAt: now,
+  }));
 
   return { added: newDocuments.length, duplicates };
 }

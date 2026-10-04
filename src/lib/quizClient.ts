@@ -1,5 +1,7 @@
 import type { QuizQuestion } from "@/types";
 import type { AiLanguage } from "@/lib/ai/types";
+import { toast } from "sonner";
+import { buildQuizAttemptBody, type QuizAttemptPayload } from "@/lib/quizAttempt";
 
 export interface GenerateQuizInput {
   language?: AiLanguage;
@@ -30,4 +32,33 @@ export async function generateVideoQuizForCurrentVideo(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Quiz generation failed (${res.status})`);
   return { questions: Array.isArray(data.questions) ? data.questions : [] };
+}
+
+/**
+ * Saves a finished quiz attempt. Never throws into the UI: any failure (network, non-2xx)
+ * shows one toast and resolves to false.
+ */
+export async function submitQuizAttempt(
+  user: { getIdToken: () => Promise<string> },
+  payload: QuizAttemptPayload,
+): Promise<boolean> {
+  try {
+    const idToken = await user.getIdToken();
+    const response = await fetch("/api/quiz-attempts", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildQuizAttemptBody(payload)),
+    });
+    if (!response.ok) {
+      toast.error("Couldn't save your quiz result");
+      return false;
+    }
+    return true;
+  } catch {
+    toast.error("Couldn't save your quiz result");
+    return false;
+  }
 }

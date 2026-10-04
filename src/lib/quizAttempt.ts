@@ -14,6 +14,40 @@ export interface QuizAttemptInput {
   answers?: QuizAttemptAnswerInput[];
 }
 
+/** The minimal question shape needed to grade an attempt. */
+export interface GradableQuizQuestion {
+  id: string;
+  correctOptionId: string;
+}
+
+export interface QuizAttemptPayload {
+  videoId: string;
+  categoryId?: string;
+  playlistId?: string;
+  source: NonNullable<QuizAttemptInput["source"]>;
+  score: number;
+  totalQuestions: number;
+  questions: GradableQuizQuestion[];
+  selectedAnswers: Record<string, string>;
+}
+
+/** Builds the JSON body POSTed to /api/quiz-attempts (the answers array is derived from the questions). */
+export function buildQuizAttemptBody(payload: QuizAttemptPayload): QuizAttemptInput {
+  return {
+    videoId: payload.videoId,
+    categoryId: payload.categoryId,
+    playlistId: payload.playlistId,
+    source: payload.source,
+    score: payload.score,
+    totalQuestions: payload.totalQuestions,
+    answers: payload.questions.map((question) => ({
+      questionId: question.id,
+      chosenOptionId: payload.selectedAnswers[question.id] || "",
+      wasCorrect: payload.selectedAnswers[question.id] === question.correctOptionId,
+    })),
+  };
+}
+
 export type QuizAttemptValidationResult =
   | { ok: true; value: QuizAttemptInput }
   | { ok: false; error: string };
