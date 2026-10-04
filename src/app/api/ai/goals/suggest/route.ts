@@ -3,6 +3,7 @@ import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { AiServiceError, generateGoalSuggestions } from "@/lib/ai/aiService";
 import type { RoadmapStep } from "@/types";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 const STATUS_BY_CODE: Record<string, number> = {
   auth: 400,
@@ -15,6 +16,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   unsupported_provider: 400,
   unknown: 500,
 };
+
+// Calls an AI model; adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
@@ -34,6 +38,8 @@ export async function POST(req: NextRequest) {
     .map((step) => step as Partial<RoadmapStep>)
     .filter((step): step is Partial<RoadmapStep> => !!step && typeof step.title === "string" && step.title.trim().length > 0)
     .map((step) => ({ title: step.title!.trim(), description: (step.description || "").trim() }));
+  const language = await resolveAiLanguage(uid, body?.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
 
   if (!categoryName) {
     return NextResponse.json({ error: "A categoryName is required." }, { status: 400 });
@@ -44,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const suggestions = await withAiConnection(uid, async (apiKey, provider, model) => {
-      return await generateGoalSuggestions({ provider, apiKey, model }, { categoryName, level, steps });
+      return await generateGoalSuggestions({ provider, apiKey, model, language }, { categoryName, level, steps });
     });
 
     return NextResponse.json({ suggestions }, { headers: { "Cache-Control": "private, no-store" } });

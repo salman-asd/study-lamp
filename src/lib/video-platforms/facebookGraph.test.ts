@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { fetchFacebookVideoOEmbed } from "./facebookGraph";
+import { fetchFacebookVideoOEmbed, resolveFacebookRedirectUrl } from "./facebookGraph";
 
 type FetchArgs = Parameters<typeof fetch>;
 
 describe("fetchFacebookVideoOEmbed", () => {
   const originalFetch = globalThis.fetch;
-  let mockImpl: (url: string) => Promise<Response>;
+  let mockImpl: (url: string, init?: RequestInit) => Promise<Response>;
 
   before(() => {
-    globalThis.fetch = ((...args: FetchArgs) => mockImpl(String(args[0]))) as typeof fetch;
+    globalThis.fetch = ((...args: FetchArgs) => mockImpl(String(args[0]), args[1])) as typeof fetch;
   });
 
   after(() => {
@@ -24,6 +24,46 @@ describe("fetchFacebookVideoOEmbed", () => {
   function htmlResponse(html: string) {
     return new Response(html, { status: 200 });
   }
+
+  it("rejects internal IP and plain HTTP targets without making a request", async () => {
+    let calls = 0;
+    mockImpl = async () => {
+      calls++;
+      return new Response(null, { status: 200 });
+    };
+
+    assert.equal(await resolveFacebookRedirectUrl("http://169.254.169.254/latest/meta-data/"), null);
+    assert.equal(await resolveFacebookRedirectUrl("http://fb.watch/abc123"), null);
+    assert.equal(calls, 0);
+  });
+
+  it("does not follow a redirect to an untrusted host", async () => {
+    const calls: string[] = [];
+    mockImpl = async (url) => {
+      calls.push(url);
+      return new Response(null, { status: 302, headers: { Location: "http://169.254.169.254/" } });
+    };
+
+    assert.equal(await resolveFacebookRedirectUrl("https://fb.watch/abc123"), null);
+    assert.deepEqual(calls, ["https://fb.watch/abc123"]);
+  });
+
+  it("follows a valid fb.watch redirect manually to an allowed Facebook URL", async () => {
+    const calls: Array<{ url: string; redirect?: RequestRedirect }> = [];
+    mockImpl = async (url, init) => {
+      calls.push({ url, redirect: init?.redirect });
+      if (url === "https://fb.watch/abc123") {
+        return new Response(null, { status: 302, headers: { Location: "https://www.facebook.com/watch/?v=1234567890" } });
+      }
+      return new Response(null, { status: 200 });
+    };
+
+    assert.equal(
+      await resolveFacebookRedirectUrl("https://fb.watch/abc123"),
+      "https://www.facebook.com/watch/?v=1234567890"
+    );
+    assert.deepEqual(calls.map((call) => call.redirect), ["manual", "manual"]);
+  });
 
   it("parses the real-world 'stats | title | page' shape into a clean title and a page-name author fallback", async () => {
     // This is the exact structure reported in the wild: a stats segment

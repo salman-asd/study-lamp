@@ -5,20 +5,13 @@ import { adminAuth, adminDb } from "@/lib/server/firebase-admin";
  * Verifies the "Authorization: Bearer <idToken>" header against Firebase
  * Admin Auth and returns the caller's uid, or null if missing/invalid.
  *
- * Same check every existing authenticated route already does inline (see
- * src/app/api/youtube-duration/route.ts and src/app/api/find-user/route.ts)
- * — factored out here since Phase 2 adds several new route files that all
- * need it. Existing routes are left untouched; this doesn't change them.
+ * Same check every authenticated route uses; browser requests must send the
+ * token in Authorization rather than a query string.
  */
 export async function requireAuthenticatedUid(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get("authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  // A plain <img src>/<video src> can't set an Authorization header, so the
-  // Drive stream/thumbnail proxy routes (Phase 16) pass the ID token as a
-  // query param instead. Every other route keeps using the header — this is
-  // purely an additional fallback, never a weaker check (verifyIdToken below
-  // validates it identically either way).
-  const token = match?.[1] || req.nextUrl.searchParams.get("idToken") || "";
+  const token = match?.[1] || "";
   if (!token) return null;
 
   try {

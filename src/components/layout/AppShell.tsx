@@ -26,7 +26,9 @@ export function AppShell({
     // sidebar and header included — out of view.
     <div className="flex h-screen overflow-hidden">
       <RouteProgressBar />
-      <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <React.Suspense fallback={null}>
+        <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+      </React.Suspense>
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onMenuClick={() => setMobileOpen(true)} onSearch={onSearch} />
         <VerifyEmailBanner />

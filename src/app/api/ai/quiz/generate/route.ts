@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoQuiz, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
 import { resolveTranscript } from "@/lib/ai/universalTranscript";
-import { getAiPreferences } from "@/lib/server/aiPreferences";
+import { getAiPreferences, resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
-import { buildVideoSourceHash } from "@/lib/quizSource";
+import { buildSourceHash } from "@/lib/server/sourceHash";
 import {
   getPersonalVideoQuiz,
   getSharedVideoQuiz,
@@ -25,6 +25,9 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 };
 
 const TRANSCRIPT_MAX_LENGTH = 50000;
+
+// Calls an AI model; adjust to the deployment plan limit.
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
@@ -52,6 +55,8 @@ export async function POST(req: NextRequest) {
   // src/lib/firestore/transcripts.ts), sent by the client the same way
   // `summary` already is.
   const manualTranscript = typeof b.manualTranscript === "string" ? b.manualTranscript : "";
+  const language = await resolveAiLanguage(uid, b.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   if (manualTranscript.length > TRANSCRIPT_MAX_LENGTH) {
     return NextResponse.json({ error: "manualTranscript is too long." }, { status: 400 });
   }
@@ -100,7 +105,7 @@ export async function POST(req: NextRequest) {
   // Source hash now includes the transcript (Phase 5) so a changed
   // transcript — a better manual paste, newly-available captions —
   // correctly invalidates a cached quiz instead of serving a stale one.
-  const sourceHash = buildVideoSourceHash(title || "", description, summary, transcript);
+  const sourceHash = buildSourceHash({ kind: "video-quiz", title, description, summary, text: transcript, language });
 
   let cachedQuiz;
   if (ownerId && playlistId && videoId) {
@@ -116,7 +121,7 @@ export async function POST(req: NextRequest) {
   try {
     const questions = await withAiConnection(uid, async (apiKey, provider, model) => {
       return await generateVideoQuiz(
-        { provider, apiKey, model },
+        { provider, apiKey, model, language },
         { title, description, transcript: transcript || undefined, summary }
       );
     });
@@ -145,4 +150,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Something went wrong generating a quiz." }, { status: 500 });
   }
 }
-

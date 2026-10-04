@@ -1,60 +1,34 @@
 "use client";
 import * as React from "react";
-import { listPlaylists, listVideos } from "@/lib/firestore/playlists";
-import { getAllUserVideoStates } from "@/lib/firestore/userVideoState";
-import { listAllPersonalVideos } from "@/lib/firestore/personalPlaylists";
-import { personalVideoToVideoWithState } from "@/lib/personalVideoAdapter";
-import type { Playlist, VideoWithState } from "@/types";
+import { useAllVideosContext } from "@/components/video/AllVideosProvider";
+import type { UserVideoState } from "@/types";
 
-interface AllVideosData {
-  loading: boolean;
-  playlists: Playlist[];
-  videos: VideoWithState[];
-  refresh: () => Promise<void>;
-}
-
-/**
- * Combines the shared/admin-curated library (useVideoLibrary's source) with
- * the user's own personal-playlist videos into one flat, de-duplicated
- * VideoWithState[]. Use this — instead of useVideoLibrary — for any view
- * that's meant to reflect a user's favorite/watch-later/priority/watched
- * state everywhere it was set, regardless of which tier the video lives in:
- * Watch Later, Favorites, Priority, Continue Watching, and the Dashboard.
- *
- * `library/page.tsx` intentionally keeps using useVideoLibrary alone — it's
- * the shared-library *browse* page, not a personal cross-cutting view.
- */
-export function useAllVideos(uid: string | undefined): AllVideosData {
-  const [loading, setLoading] = React.useState(true);
-  const [playlists, setPlaylists] = React.useState<Playlist[]>([]);
-  const [videos, setVideos] = React.useState<VideoWithState[]>([]);
-
-  const load = React.useCallback(async () => {
-    if (!uid) return;
-    setLoading(true);
-    const [pls, states, personalVideos] = await Promise.all([
-      listPlaylists(false),
-      getAllUserVideoStates(uid),
-      listAllPersonalVideos(uid),
-    ]);
-    setPlaylists(pls);
-
-    const sharedVideos: VideoWithState[] = [];
-    for (const p of pls) {
-      const vids = await listVideos(p.id);
-      vids.forEach((v) =>
-        sharedVideos.push({ ...v, state: states[v.id] || null, playlistTitle: p.title, source: "shared" })
-      );
-    }
-
-    const personal = personalVideos.map(personalVideoToVideoWithState);
-    setVideos([...sharedVideos, ...personal]);
-    setLoading(false);
-  }, [uid]);
+export function useAllVideos(uid: string | undefined) {
+  const context = useAllVideosContext();
+  // `context` is a new object on every snapshot change. Depend only on the
+  // stable callbacks, otherwise load() -> new snapshot -> new context -> effect
+  // -> load() loops forever.
+  const { load, patchVideo: patchContextVideo } = context;
+  const matchesUser = !!uid && context.uid === uid;
 
   React.useEffect(() => {
-    load();
-  }, [load]);
+    if (uid) void load(uid);
+  }, [uid, load]);
 
-  return { loading, playlists, videos, refresh: load };
+  const refresh = React.useCallback(() => {
+    return uid ? load(uid, true) : Promise.resolve();
+  }, [uid, load]);
+
+  const patchVideo = React.useCallback((key: string, patch: Partial<UserVideoState>) => {
+    if (!matchesUser) return () => undefined;
+    return patchContextVideo(key, patch);
+  }, [patchContextVideo, matchesUser]);
+
+  return {
+    loading: !!uid && (!matchesUser || context.loading),
+    playlists: matchesUser ? context.playlists : [],
+    videos: matchesUser ? context.videos : [],
+    refresh,
+    patchVideo,
+  };
 }

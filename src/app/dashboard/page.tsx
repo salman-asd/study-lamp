@@ -35,10 +35,11 @@ import { formatWatchTime } from "@/lib/utils";
 import { getVideoWatchHref } from "@/lib/videoRoutes";
 import { VideoCard } from "@/components/video/VideoCard";
 import { QuickAddVideoDialog } from "@/components/video/QuickAddVideoDialog";
-import { toggleFavoriteAny, toggleWatchLaterAny, setPriorityAny, setWatchedAny } from "@/lib/videoActions";
+import { toggleFavoriteAny, toggleWatchLaterAny, setPriorityAny, setWatchedAny, updateVideoStateOptimistically } from "@/lib/videoActions";
 import type { Goal, LearningRoadmap, PersonalPlaylist, PriorityLevel, QuizAttempt, VideoWithState } from "@/types";
 import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
 import {
   Clock3, ListVideo, Plus, Star, Flag, BookOpen, PlayCircle, CheckCircle2, Sparkles, Flame, Target, TrendingUp, BookOpenCheck,
 } from "lucide-react";
@@ -53,7 +54,7 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { user, profile } = useAuth();
-  const { loading, videos, refresh } = useAllVideos(user?.uid);
+  const { loading, videos, patchVideo } = useAllVideos(user?.uid);
   const [playlists, setPlaylists] = React.useState<PersonalPlaylist[]>([]);
   const [goals, setGoals] = React.useState<Goal[]>([]);
   const [roadmaps, setRoadmaps] = React.useState<LearningRoadmap[]>([]);
@@ -303,23 +304,42 @@ function DashboardContent() {
 
   async function handleToggleFavorite(v: VideoWithState) {
     if (!user) return;
-    await toggleFavoriteAny(user.uid, v, !v.state?.isFavorite);
-    refresh();
+    const next = !v.state?.isFavorite;
+    try {
+      await updateVideoStateOptimistically(v, { isFavorite: next }, patchVideo, () => toggleFavoriteAny(user.uid, v, next));
+    } catch {
+      toast.error("Couldn't update favorite status.");
+    }
   }
   async function handleToggleWatchLater(v: VideoWithState) {
     if (!user) return;
-    await toggleWatchLaterAny(user.uid, v, !v.state?.isWatchLater);
-    refresh();
+    const next = !v.state?.isWatchLater;
+    try {
+      await updateVideoStateOptimistically(v, { isWatchLater: next, watchLaterOrder: next ? Date.now() : undefined }, patchVideo, () => toggleWatchLaterAny(user.uid, v, next));
+    } catch {
+      toast.error("Couldn't update Watch Later.");
+    }
   }
   async function handleSetPriority(v: VideoWithState, p: PriorityLevel) {
     if (!user) return;
-    await setPriorityAny(user.uid, v, p);
-    refresh();
+    try {
+      await updateVideoStateOptimistically(v, { priority: p, priorityOrder: p ? Date.now() : undefined }, patchVideo, () => setPriorityAny(user.uid, v, p));
+    } catch {
+      toast.error("Couldn't update priority.");
+    }
   }
   async function handleToggleWatched(v: VideoWithState) {
     if (!user) return;
-    await setWatchedAny(user.uid, v, v.state?.status !== "completed");
-    refresh();
+    const watched = v.state?.status !== "completed";
+    try {
+      await updateVideoStateOptimistically(v, {
+        status: watched ? "completed" : "not_started",
+        watchedPercentage: watched ? 100 : 0,
+        completedAt: watched ? v.state?.completedAt || null : null,
+      }, patchVideo, () => setWatchedAny(user.uid, v, watched));
+    } catch {
+      toast.error("Couldn't update watched status.");
+    }
   }
 
   return (

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth } from "@/lib/server/firebase-admin";
-import { resolveFacebookRedirectUrl, fetchFacebookVideoOEmbed } from "@/lib/video-platforms/facebookGraph";
+import { isAllowedFacebookUrl, resolveFacebookRedirectUrl, fetchFacebookVideoOEmbed } from "@/lib/video-platforms/facebookGraph";
 import { detectVideoProvider, generateCanonicalUrl, generateFacebookAlternateUrl, generateFacebookOEmbedUrl } from "@/lib/video-platforms";
 
 async function requireAuthenticatedSession(req: NextRequest) {
@@ -37,6 +37,9 @@ export async function GET(req: NextRequest) {
   const rawUrl = req.nextUrl.searchParams.get("url");
   if (!rawUrl) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
+  }
+  if (!isAllowedFacebookUrl(rawUrl)) {
+    return NextResponse.json({ error: "A valid HTTPS Facebook video URL is required." }, { status: 400 });
   }
 
   try {

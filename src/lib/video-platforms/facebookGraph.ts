@@ -73,19 +73,50 @@ export interface FacebookCollectionPreview {
   videos: FacebookCollectionVideo[];
 }
 
+const FACEBOOK_HOSTS = ["facebook.com", "fb.watch", "fb.com"];
+
+export function isAllowedFacebookUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      (!url.port || url.port === "443") &&
+      FACEBOOK_HOSTS.some((root) => host === root || host.endsWith(`.${root}`));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Follows Facebook's short-link redirect (fb.watch, /share/v/, /share/r/)
- * server-side and returns the final, ID-bearing URL. Plain HTTP — no Graph
- * API, no credentials — because a public mechanism is sufficient here.
+ * server-side and returns the final, ID-bearing URL. Every redirect is
+ * validated before it is fetched so user-controlled URLs cannot reach hosts
+ * outside Facebook's domains.
  */
 export async function resolveFacebookRedirectUrl(shortUrl: string): Promise<string | null> {
+  if (!isAllowedFacebookUrl(shortUrl)) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const res = await fetch(shortUrl, { method: "GET", redirect: "follow" });
-    // `res.url` is the final URL after following every hop, whether or not
-    // the response body itself is useful — that's all this needs.
-    return res.url || null;
+    let currentUrl = new URL(shortUrl);
+    for (let hop = 0; hop <= 5; hop++) {
+      const res = await fetch(currentUrl, { method: "GET", redirect: "manual", signal: controller.signal });
+      if (![301, 302, 303, 307, 308].includes(res.status)) return currentUrl.toString();
+
+      const location = res.headers.get("location");
+      if (!location || hop === 5) return null;
+      const nextUrl = new URL(location, currentUrl);
+      if (!isAllowedFacebookUrl(nextUrl.toString())) return null;
+      currentUrl = nextUrl;
+    }
+    return null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

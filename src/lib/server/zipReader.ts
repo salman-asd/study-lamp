@@ -1,5 +1,8 @@
 import zlib from "zlib";
 
+const MAX_ZIP_ENTRIES = 2_000;
+const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
+
 /**
  * A minimal ZIP (central-directory) reader, just enough to pull named
  * entries out of an OOXML file (.docx/.pptx/.xlsx — all of which are a ZIP
@@ -22,37 +25,53 @@ export function readZipEntries(buffer: Buffer): Map<string, Buffer> {
   if (eocdOffset === -1) throw new Error("Not a valid zip-based Office file (no end-of-central-directory record found).");
 
   const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  if (totalEntries > MAX_ZIP_ENTRIES) throw new Error("This Office file contains too many ZIP entries.");
   let cdOffset = buffer.readUInt32LE(eocdOffset + 16);
+  let totalUncompressedBytes = 0;
 
   const CD_SIG = 0x02014b50;
   for (let i = 0; i < totalEntries; i++) {
-    if (buffer.readUInt32LE(cdOffset) !== CD_SIG) break;
+    if (cdOffset + 46 > buffer.length) throw new Error("This Office file has a malformed ZIP directory.");
+    if (buffer.readUInt32LE(cdOffset) !== CD_SIG) throw new Error("This Office file has a malformed ZIP directory.");
     const compressionMethod = buffer.readUInt16LE(cdOffset + 10);
     const compressedSize = buffer.readUInt32LE(cdOffset + 20);
+    const uncompressedSize = buffer.readUInt32LE(cdOffset + 24);
     const nameLength = buffer.readUInt16LE(cdOffset + 28);
     const extraLength = buffer.readUInt16LE(cdOffset + 30);
     const commentLength = buffer.readUInt16LE(cdOffset + 32);
     const localHeaderOffset = buffer.readUInt32LE(cdOffset + 42);
+    const entryEnd = cdOffset + 46 + nameLength + extraLength + commentLength;
+    if (entryEnd > buffer.length) throw new Error("This Office file has a malformed ZIP directory.");
     const name = buffer.toString("utf8", cdOffset + 46, cdOffset + 46 + nameLength);
+    totalUncompressedBytes += uncompressedSize;
+    if (totalUncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
+      throw new Error("This Office file expands beyond the safe extraction limit.");
+    }
 
     // Local file header tells us the actual data offset (its name/extra
     // fields can differ in length from the central directory's copy).
     const LFH_SIG = 0x04034b50;
-    if (buffer.readUInt32LE(localHeaderOffset) === LFH_SIG) {
-      const lfhNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
-      const lfhExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
-      const dataStart = localHeaderOffset + 30 + lfhNameLength + lfhExtraLength;
-      const raw = buffer.subarray(dataStart, dataStart + compressedSize);
-      try {
-        entries.set(name, compressionMethod === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw));
-      } catch {
-        // A corrupt or unsupported entry shouldn't abort the whole read —
-        // callers only need a handful of specific parts (document.xml,
-        // sharedStrings.xml, slideN.xml), not every entry to succeed.
-      }
+    if (localHeaderOffset + 30 > buffer.length || buffer.readUInt32LE(localHeaderOffset) !== LFH_SIG) {
+      throw new Error("This Office file has a malformed ZIP entry.");
     }
+    const lfhNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const lfhExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + lfhNameLength + lfhExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > buffer.length) throw new Error("This Office file has a truncated ZIP entry.");
+    const raw = buffer.subarray(dataStart, dataEnd);
+    let content: Buffer;
+    if (compressionMethod === 0) {
+      content = Buffer.from(raw);
+    } else if (compressionMethod === 8) {
+      content = zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, uncompressedSize + 1) });
+    } else {
+      throw new Error("This Office file uses an unsupported ZIP compression method.");
+    }
+    if (content.length !== uncompressedSize) throw new Error("This Office file has an invalid ZIP entry size.");
+    entries.set(name, content);
 
-    cdOffset += 46 + nameLength + extraLength + commentLength;
+    cdOffset = entryEnd;
   }
 
   return entries;

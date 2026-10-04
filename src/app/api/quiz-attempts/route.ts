@@ -1,7 +1,8 @@
-import { addDoc, collection } from "firebase/firestore";
+import admin from "firebase-admin";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
+import { adminDb } from "@/lib/server/firebase-admin";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { validateQuizAttemptInput } from "@/lib/quizAttempt";
 
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
@@ -16,23 +17,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const record = body as Record<string, unknown>;
-  const videoId = typeof record.videoId === "string" ? record.videoId.trim() : "";
-  const totalQuestions = Number(record.totalQuestions ?? 0);
-  const score = Number(record.score ?? 0);
-
-  if (!videoId || !Number.isFinite(totalQuestions) || totalQuestions <= 0 || !Number.isFinite(score)) {
-    return NextResponse.json({ error: "A valid quiz result is required." }, { status: 400 });
-  }
+  const result = validateQuizAttemptInput(body);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
   try {
-    const ref = await addDoc(collection(db, "users", uid, "quizAttempts"), {
+    const ref = await adminDb.collection("users").doc(uid).collection("quizAttempts").add({
       userId: uid,
-      videoId,
-      categoryId: typeof record.categoryId === "string" ? record.categoryId : null,
-      score,
-      totalQuestions,
-      completedAt: new Date(),
+      ...result.value,
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     return NextResponse.json({ id: ref.id }, { status: 201 });

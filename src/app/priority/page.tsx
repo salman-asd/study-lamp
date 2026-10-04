@@ -8,7 +8,7 @@ import { useAllVideos } from "@/hooks/useAllVideos";
 import { SortableList } from "@/components/dnd/SortableList";
 import { VideoListRow } from "@/components/video/VideoListRow";
 import { Skeleton } from "@/components/ui/skeleton";
-import { setPriorityAny, setWatchedAny, reorderMixedList } from "@/lib/videoActions";
+import { setPriorityAny, setWatchedAny, reorderMixedList, updateVideoStateOptimistically } from "@/lib/videoActions";
 import { groupVideosByPlaylist, type PlaylistGroup } from "@/lib/groupByPlaylist";
 import type { VideoWithState } from "@/types";
 import { toast } from "sonner";
@@ -31,7 +31,7 @@ export default function PriorityPage() {
 
 function PriorityContent() {
   const { user } = useAuth();
-  const { loading, videos, refresh } = useAllVideos(user?.uid);
+  const { loading, videos, patchVideo } = useAllVideos(user?.uid);
   const [groups, setGroups] = React.useState<LevelGroups>({ high: [], medium: [], low: [] });
 
   React.useEffect(() => {
@@ -64,14 +64,25 @@ function PriorityContent() {
   }
 
   async function handleChangeLevel(v: VideoWithState, p: "high" | "medium" | "low" | null) {
-    await setPriorityAny(user!.uid, v, p);
-    toast.success(p ? `Moved to ${p} priority` : "Priority removed");
-    refresh();
+    try {
+      await updateVideoStateOptimistically(v, { priority: p, priorityOrder: p ? Date.now() : undefined }, patchVideo, () => setPriorityAny(user!.uid, v, p));
+      toast.success(p ? `Moved to ${p} priority` : "Priority removed");
+    } catch {
+      toast.error("Couldn't update priority.");
+    }
   }
 
   async function handleMarkWatched(v: VideoWithState) {
-    await setWatchedAny(user!.uid, v, v.state?.status !== "completed");
-    refresh();
+    const watched = v.state?.status !== "completed";
+    try {
+      await updateVideoStateOptimistically(v, {
+        status: watched ? "completed" : "not_started",
+        watchedPercentage: watched ? 100 : 0,
+        completedAt: watched ? v.state?.completedAt || null : null,
+      }, patchVideo, () => setWatchedAny(user!.uid, v, watched));
+    } catch {
+      toast.error("Couldn't update watched status.");
+    }
   }
 
   return (

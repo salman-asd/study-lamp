@@ -11,6 +11,8 @@ import { VideoActionsBar } from "@/components/video/VideoActionsBar";
 import { PlaylistSidebar } from "@/components/video/PlaylistSidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 import { TranscriptInput } from "@/components/video/TranscriptInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +57,7 @@ function PersonalVideoContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user } = useAuth();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const ownerId = searchParams.get("owner") || user?.uid || "";
   const isViewingOther = ownerId !== user?.uid;
   const autoPlayRequested = searchParams.get("autoplay") === "1";
@@ -173,11 +176,12 @@ function PersonalVideoContent() {
   }
 
   async function handleGenerateQuiz() {
-    if (!user || isViewingOther || !video || quizLoading) return;
+    if (!user || isViewingOther || !video || quizLoading || !languageReady) return;
     setQuizLoading(true);
     try {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
         videoId,
@@ -212,22 +216,29 @@ function PersonalVideoContent() {
 
     try {
       const idToken = await user.getIdToken();
-      await fetch("/api/quiz-attempts", {
+      const response = await fetch("/api/quiz-attempts", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          userId: user.uid,
           videoId: video.id,
-          categoryId: video.categoryId || null,
+          categoryId: video.categoryId || undefined,
+          playlistId,
+          source: "personal",
           score,
           totalQuestions: total,
+          answers: quizQuestions.map((question) => ({
+            questionId: question.id,
+            chosenOptionId: selectedAnswers[question.id] || "",
+            wasCorrect: selectedAnswers[question.id] === question.correctOptionId,
+          })),
         }),
       });
+      if (!response.ok) toast.error("Couldn't save your quiz result");
     } catch {
-      // Intentionally non-blocking: the quiz can still be graded locally.
+      toast.error("Couldn't save your quiz result");
     }
   }
 
@@ -252,7 +263,7 @@ function PersonalVideoContent() {
   // quota to write into a student's private summary — outside what Phase 5
   // is meant to cover.
   async function handleGenerateSummary() {
-    if (!user || isViewingOther || !video || generatingSummary) return;
+    if (!user || isViewingOther || !video || generatingSummary || !languageReady) return;
     if (summary.trim() && !confirm("Replace your current summary with an AI-generated starter draft? This can't be undone.")) {
       return;
     }
@@ -260,6 +271,7 @@ function PersonalVideoContent() {
     try {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
       });
@@ -469,7 +481,8 @@ function PersonalVideoContent() {
               </TabsList>
               <TabsContent value="summary">
                 {!isViewingOther && (
-                  <div className="mb-2 flex justify-end">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || generatingSummary} />
                     <Button
                       variant="outline"
                       size="sm"
@@ -529,8 +542,9 @@ function PersonalVideoContent() {
               </TabsContent>
 
               <TabsContent value="quiz" className="space-y-4">
-                <div className="flex justify-end">
-                  <Button variant="outline" size="sm" onClick={handleGenerateQuiz} loading={quizLoading} loadingText="Generating…">
+                <div className="flex items-center justify-between gap-3">
+                  {!isViewingOther && <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || quizLoading} />}
+                  <Button variant="outline" size="sm" onClick={handleGenerateQuiz} disabled={!languageReady || isViewingOther} loading={quizLoading} loadingText="Generating…">
                     {quizQuestions.length ? "Generate a new quiz" : "Generate quiz"}
                   </Button>
                 </div>

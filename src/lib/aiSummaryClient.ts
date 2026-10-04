@@ -2,6 +2,7 @@
 // Bearer-token pattern as src/lib/aiConnectionsClient.ts. Deliberately just
 // one function: unlike AI connections, there's only one thing a video page
 // needs to do here.
+import type { AiLanguage } from "@/lib/ai/types";
 
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
@@ -10,6 +11,7 @@ async function parseOrThrow(res: Response): Promise<any> {
 }
 
 export interface GenerateStarterSummaryInput {
+  language?: AiLanguage;
   youtubeVideoId?: string;
   /** Phase 4 (roadmap v3): a manually pasted/uploaded transcript, used when
    *  there's no YouTube video (or no captions) to fall back on. */

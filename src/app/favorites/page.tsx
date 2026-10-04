@@ -6,7 +6,7 @@ import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useAllVideos } from "@/hooks/useAllVideos";
 import { VideoGrid } from "@/components/video/VideoGrid";
-import { toggleFavoriteAny, toggleWatchLaterAny, setPriorityAny, setWatchedAny } from "@/lib/videoActions";
+import { toggleFavoriteAny, toggleWatchLaterAny, setPriorityAny, setWatchedAny, updateVideoStateOptimistically } from "@/lib/videoActions";
 import type { PriorityLevel, VideoWithState } from "@/types";
 import { toast } from "sonner";
 
@@ -20,29 +20,47 @@ export default function FavoritesPage() {
 
 function FavoritesContent() {
   const { user } = useAuth();
-  const { loading, videos, refresh } = useAllVideos(user?.uid);
+  const { loading, videos, patchVideo } = useAllVideos(user?.uid);
   const favorites = videos.filter((v) => v.state?.isFavorite);
 
   async function handleUnfavorite(video: VideoWithState) {
     if (!user) return;
-    await toggleFavoriteAny(user.uid, video, false);
-    toast.success("Removed from favorites");
-    refresh();
+    try {
+      await updateVideoStateOptimistically(video, { isFavorite: false }, patchVideo, () => toggleFavoriteAny(user.uid, video, false));
+      toast.success("Removed from favorites");
+    } catch {
+      toast.error("Couldn't update favorite status.");
+    }
   }
   async function handleToggleWatchLater(video: VideoWithState) {
     if (!user) return;
-    await toggleWatchLaterAny(user.uid, video, !video.state?.isWatchLater);
-    refresh();
+    const next = !video.state?.isWatchLater;
+    try {
+      await updateVideoStateOptimistically(video, { isWatchLater: next, watchLaterOrder: next ? Date.now() : undefined }, patchVideo, () => toggleWatchLaterAny(user.uid, video, next));
+    } catch {
+      toast.error("Couldn't update Watch Later.");
+    }
   }
   async function handleSetPriority(video: VideoWithState, p: PriorityLevel) {
     if (!user) return;
-    await setPriorityAny(user.uid, video, p);
-    refresh();
+    try {
+      await updateVideoStateOptimistically(video, { priority: p, priorityOrder: p ? Date.now() : undefined }, patchVideo, () => setPriorityAny(user.uid, video, p));
+    } catch {
+      toast.error("Couldn't update priority.");
+    }
   }
   async function handleToggleWatched(video: VideoWithState) {
     if (!user) return;
-    await setWatchedAny(user.uid, video, video.state?.status !== "completed");
-    refresh();
+    const watched = video.state?.status !== "completed";
+    try {
+      await updateVideoStateOptimistically(video, {
+        status: watched ? "completed" : "not_started",
+        watchedPercentage: watched ? 100 : 0,
+        completedAt: watched ? video.state?.completedAt || null : null,
+      }, patchVideo, () => setWatchedAny(user.uid, video, watched));
+    } catch {
+      toast.error("Couldn't update watched status.");
+    }
   }
 
   return (

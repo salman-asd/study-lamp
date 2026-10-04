@@ -6,6 +6,7 @@ import { getDriveAccessToken } from "@/lib/driveClient";
 import { Button } from "@/components/ui/button";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
+import { buildPickerMimeTypes, type DrivePickerKind } from "@/lib/driveMime";
 
 declare global {
   interface Window {
@@ -34,6 +35,21 @@ function loadPickerScripts(): Promise<void> {
   return scriptsLoadingPromise;
 }
 
+/** Reads the public Picker config, toasting a helpful message when it is missing. */
+function getPickerConfig(): { apiKey: string; appId: string } | null {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY;
+  const appId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
+  if (!apiKey) {
+    toast.error("Google Drive picker isn't configured on this deployment (missing NEXT_PUBLIC_GOOGLE_PICKER_API_KEY).");
+    return null;
+  }
+  if (!appId) {
+    toast.error("Google Drive picker isn't configured on this deployment (missing Firebase project number).");
+    return null;
+  }
+  return { apiKey, appId };
+}
+
 export interface DrivePickerSelection {
   id: string;
   name: string;
@@ -54,27 +70,22 @@ export function DrivePickerButton({
   onPicked,
   allowFolders = true,
   label = "Pick from Drive",
+  kinds = ["video"],
 }: {
   connectionId: string;
-  onPicked: (selection: DrivePickerSelection) => void;
+  onPicked: (selections: DrivePickerSelection[]) => void;
   allowFolders?: boolean;
   label?: string;
+  kinds?: DrivePickerKind[];
 }) {
   const { user } = useAuth();
   const [opening, setOpening] = React.useState(false);
 
   async function openPicker() {
     if (!user) return;
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY;
-    const appId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
-    if (!apiKey) {
-      toast.error("Google Drive picker isn't configured on this deployment (missing NEXT_PUBLIC_GOOGLE_PICKER_API_KEY).");
-      return;
-    }
-    if (!appId) {
-      toast.error("Google Drive picker isn't configured on this deployment (missing Firebase project number).");
-      return;
-    }
+    const config = getPickerConfig();
+    if (!config) return;
+    const { apiKey, appId } = config;
 
     setOpening(true);
     try {
@@ -82,31 +93,66 @@ export function DrivePickerButton({
       const [accessToken] = await Promise.all([getDriveAccessToken(idToken, connectionId), loadPickerScripts()]);
 
       const google = window.google;
-      const viewIds = [google.picker.ViewId.DOCS_VIDEOS];
-      const views = viewIds.map((id: string) => new google.picker.DocsView(id).setIncludeFolders(allowFolders).setSelectFolderEnabled(allowFolders));
-      // Also let a user pick a PDF/Word/PowerPoint/Excel file (Phase 18-19),
-      // using the same picker instance rather than a second entry point.
-      views.push(new google.picker.DocsView(google.picker.ViewId.DOCS).setIncludeFolders(allowFolders).setSelectFolderEnabled(allowFolders));
+      const views: any[] = [];
+      const videoMimeTypes = kinds.includes("video") ? ["video/*"] : [];
+      const docMimeTypes = buildPickerMimeTypes(kinds.filter((kind) => kind !== "video"));
 
-      const picker = new google.picker.PickerBuilder()
+      if (videoMimeTypes.length > 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS_VIDEOS)
+            .setMimeTypes(videoMimeTypes.join(","))
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      if (docMimeTypes.length > 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setMimeTypes(docMimeTypes.join(","))
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      if (views.length === 0) {
+        views.push(
+          new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setIncludeFolders(allowFolders)
+            .setSelectFolderEnabled(allowFolders)
+        );
+      }
+
+      const builder = new google.picker.PickerBuilder()
         .setAppId(appId)
         .setOAuthToken(accessToken)
         .setDeveloperKey(apiKey)
-        .setTitle("Choose a video, document, or folder")
-        .addView(views[0])
-        .addView(views[1])
+        .setTitle(
+          kinds.includes("video") && docMimeTypes.length > 0
+            ? "Choose a video, document, or folder"
+            : kinds.includes("video")
+              ? "Choose a video or folder"
+              : "Choose a document or folder"
+        )
+        .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
         .setCallback((data: any) => {
           if (data.action === google.picker.Action.PICKED) {
-            const doc = data.docs[0];
-            onPicked({
+            const selected = Array.isArray(data.docs) ? data.docs : [];
+            if (selected.length === 0) return;
+            onPicked(selected.map((doc: any) => ({
               id: doc.id,
               name: doc.name,
               mimeType: doc.mimeType,
               isFolder: doc.mimeType === "application/vnd.google-apps.folder",
-            });
+            })));
           }
-        })
-        .build();
+        });
+
+      for (const view of views) {
+        builder.addView(view);
+      }
+
+      const picker = builder.build();
       picker.setVisible(true);
     } catch (error: any) {
       toast.error(error?.message || "Couldn't open the Google Drive picker.");
@@ -120,4 +166,52 @@ export function DrivePickerButton({
       <FolderOpen className="h-4 w-4" /> {label}
     </Button>
   );
+}
+
+/**
+ * Reopens the Picker scoped to ONE folder's direct children. Under the narrow
+ * drive.file scope, picking a folder does not expose the files inside it; files
+ * the user selects in the Picker are what grant per-file access, so this lets
+ * "import a folder" still work. Multi-select is on (Ctrl/Cmd+A selects all).
+ */
+export async function openFolderChildrenPicker(options: {
+  idToken: string;
+  connectionId: string;
+  folderId: string;
+  folderName: string;
+  kinds?: DrivePickerKind[];
+  onPicked: (selections: DrivePickerSelection[]) => void;
+}): Promise<void> {
+  const config = getPickerConfig();
+  if (!config) return;
+  const [accessToken] = await Promise.all([getDriveAccessToken(options.idToken, options.connectionId), loadPickerScripts()]);
+
+  const google = window.google;
+  const mimeTypes = buildPickerMimeTypes(options.kinds ?? ["video"]);
+  const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+    .setParent(options.folderId)
+    .setIncludeFolders(false)
+    .setSelectFolderEnabled(false);
+  if (mimeTypes.length > 0) view.setMimeTypes(mimeTypes.join(","));
+
+  new google.picker.PickerBuilder()
+    .setAppId(config.appId)
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(config.apiKey)
+    .setTitle(`Select the files to import from ${options.folderName} (Ctrl/Cmd+A selects all)`)
+    .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+    .addView(view)
+    .setCallback((data: any) => {
+      if (data.action !== google.picker.Action.PICKED) return;
+      const selected = Array.isArray(data.docs) ? data.docs : [];
+      if (selected.length === 0) return;
+      options.onPicked(selected.map((doc: any) => ({
+        id: doc.id,
+        name: doc.name,
+        mimeType: doc.mimeType,
+        isFolder: doc.mimeType === "application/vnd.google-apps.folder",
+      })));
+    })
+    .build()
+    .setVisible(true);
 }

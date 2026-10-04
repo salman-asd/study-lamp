@@ -15,6 +15,20 @@ export interface AiModelOption {
 
 type FetchModelsResult = { models: AiModelOption[] } | { error: string; status: number };
 
+/** Generic, key-free message for a provider's models-list failure. Provider error text is never forwarded. */
+export function modelsErrorMessage(status: number): string {
+  if (status === 401 || status === 403) return "The provider rejected this key.";
+  if (status === 429) return "The provider is rate-limiting this key.";
+  return "Couldn't fetch models.";
+}
+
+/** HTTP status returned to our client for a provider failure (never echoes 5xx details). */
+export function modelsErrorStatus(status: number): number {
+  if (status === 401 || status === 403) return 400;
+  if (status === 429) return 429;
+  return 502;
+}
+
 /**
  * Calls a provider's models-list endpoint with the given API key and
  * returns a normalized, sorted model list. Shared by
@@ -36,34 +50,36 @@ export async function fetchModelsForProvider(
     return { error: "API key is required.", status: 400 };
   }
 
-  // Gemini's Generative Language API does not accept an API key as an
-  // Authorization: Bearer header — it requires it as a `key` query
-  // parameter. Sending it as a Bearer token gets rejected with a generic
-  // "Expected OAuth 2 access token..." error, which is what was happening
-  // here before this fix.
-  const url =
-    provider === "gemini"
-      ? `${endpoint}?key=${encodeURIComponent(trimmedApiKey)}`
-      : endpoint;
+  // Gemini rejects `Authorization: Bearer <api key>`; it takes the key in the
+  // `x-goog-api-key` header (same as the generation adapter). The key is never
+  // put in the URL, where it could end up in logs and proxies.
+  const url = endpoint;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  if (provider === "anthropic") {
+  if (provider === "gemini") {
+    headers["x-goog-api-key"] = trimmedApiKey;
+  } else if (provider === "anthropic") {
     // Anthropic uses x-api-key instead of Authorization: Bearer.
     headers["x-api-key"] = trimmedApiKey;
     headers["anthropic-version"] = "2023-06-01";
-  } else if (provider !== "gemini") {
+  } else {
     // OpenAI-compatible providers (openai, openrouter, groq) use a Bearer token.
     headers.Authorization = `Bearer ${trimmedApiKey}`;
   }
 
-  const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "GET", headers, cache: "no-store" });
+  } catch {
+    return { error: "Couldn't fetch models.", status: 502 };
+  }
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const errorMessage =
-      data?.error?.message || data?.error || `Unable to fetch models (${response.status})`;
-    return { error: errorMessage, status: response.status };
+    // Only the status is logged; provider bodies can echo request details.
+    console.error(`AI models lookup failed (${provider}, status ${response.status})`);
+    return { error: modelsErrorMessage(response.status), status: modelsErrorStatus(response.status) };
   }
 
   // Gemini's response shape is { models: [{ name: "models/gemini-1.5-pro",

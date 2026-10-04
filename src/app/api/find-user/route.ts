@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminAuth } from "@/lib/server/firebase-admin";
+import { checkRateLimit } from "@/lib/server/rateLimit";
 
 export async function GET(request: Request) {
   const authorization = request.headers.get("authorization");
@@ -10,6 +11,9 @@ export async function GET(request: Request) {
 
   try {
     const caller = await adminAuth.verifyIdToken(authorization.slice(7));
+    if (!checkRateLimit(caller.uid, { scope: "find-user", limit: 20 })) {
+      return NextResponse.json({ error: "Too many lookup requests." }, { status: 429, headers: { "Retry-After": "60" } });
+    }
     const email = new URL(request.url).searchParams.get("email")?.trim();
     if (!email || email.length > 320) return NextResponse.json({ error: "A valid email is required." }, { status: 400 });
     const profile = await adminAuth.getUserByEmail(email);

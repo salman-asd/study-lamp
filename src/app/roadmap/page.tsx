@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { TourChip } from "@/components/tour/TourChip";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 import { AppShell } from "@/components/layout/AppShell";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -35,6 +37,7 @@ import {
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { AiLanguage } from "@/lib/ai/types";
 
 export default function RoadmapPage() {
   return (
@@ -46,6 +49,7 @@ export default function RoadmapPage() {
 
 function RoadmapContent() {
   const { user } = useAuth();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const searchParams = useSearchParams();
   const [categories, setCategories] = React.useState<Category[]>([]);
   const [interests, setInterests] = React.useState<UserInterest[]>([]);
@@ -170,7 +174,7 @@ function RoadmapContent() {
   // "Regenerate" (roadmap already exists) — the API route upserts either
   // way, so the caller never has to think about which case it is.
   async function generateOrRegenerate(categoryId: string, level: RoadmapLevel, roadmap: LearningRoadmap | undefined) {
-    if (!user) return;
+    if (!user || !languageReady) return;
     const category = categories.find((item) => item.id === categoryId);
     const matchedInterest = interests.find((item) => item.categoryId === categoryId);
     try {
@@ -184,6 +188,7 @@ function RoadmapContent() {
           level,
           subtopics: matchedInterest?.subtopics ?? [],
           roadmapId: roadmap?.id,
+          language: languageForRequest,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -277,7 +282,7 @@ function RoadmapContent() {
       const res = await fetch("/api/ai/roadmap/clarify", {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, kind: "topic" }),
+        body: JSON.stringify({ name: trimmed, kind: "topic", language: languageForRequest }),
       });
       const result = await res.json().catch(() => ({ ambiguous: false }));
       if (res.ok && result?.ambiguous && result.options?.length) {
@@ -334,6 +339,7 @@ function RoadmapContent() {
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-accent">Roadmap</p>
           <h1 className="font-display text-3xl font-semibold">Your learning path</h1>
           <p className="text-muted-foreground">Choose a level for each interest and keep a personal, editable roadmap for it.</p>
+          <AiLanguagePicker label="Language for AI actions on this page" value={language} onChange={setLanguage} disabled={!languageReady || offerGenerating} />
           <TourChip tourId="roadmap" />
         </div>
 
@@ -482,6 +488,7 @@ function RoadmapContent() {
                       <FocusEditor
                         categoryName={category.name}
                         currentSubtopics={matchedInterest?.subtopics ?? []}
+                        language={languageForRequest}
                         onSave={(subtopics) => saveFocus(category.id, subtopics)}
                       />
                     </div>
@@ -522,6 +529,7 @@ function RoadmapContent() {
                     <RoadmapPanel
                       category={category}
                       level={level}
+                      language={languageForRequest}
                       subtopics={matchedInterest?.subtopics ?? []}
                       roadmap={activeRoadmap}
                       onGenerateOrRegenerate={() => generateOrRegenerate(category.id, level, activeRoadmap)}
@@ -544,10 +552,12 @@ function RoadmapContent() {
 function FocusEditor({
   categoryName,
   currentSubtopics,
+  language,
   onSave,
 }: {
   categoryName: string;
   currentSubtopics: string[];
+  language: AiLanguage | undefined;
   onSave: (subtopics: string[]) => void;
 }) {
   const { user } = useAuth();
@@ -575,7 +585,7 @@ function FocusEditor({
       const res = await fetch("/api/ai/roadmap/clarify", {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: subtopics.join(", "), context: categoryName, kind: "focus" }),
+        body: JSON.stringify({ name: subtopics.join(", "), context: categoryName, kind: "focus", language }),
       });
       const result = await res.json().catch(() => ({ ambiguous: false }));
       if (res.ok && result?.ambiguous && result.options?.length) {
@@ -657,6 +667,7 @@ function FocusEditor({
 function RoadmapPanel({
   category,
   level,
+  language,
   subtopics,
   roadmap,
   onGenerateOrRegenerate,
@@ -665,6 +676,7 @@ function RoadmapPanel({
 }: {
   category: Category;
   level: RoadmapLevel;
+  language: AiLanguage | undefined;
   subtopics: string[];
   roadmap: LearningRoadmap | undefined;
   onGenerateOrRegenerate: () => Promise<void>;
@@ -700,7 +712,7 @@ function RoadmapPanel({
       const res = await fetch("/api/ai/roadmap/prompt", {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryName: category.name, level, subtopics }),
+        body: JSON.stringify({ categoryName: category.name, level, subtopics, language }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error || "Unable to build the prompt.");
@@ -984,6 +996,8 @@ function RoadmapEditor({
 }) {
   const { user } = useAuth();
   const steps = roadmap?.steps ?? [];
+  // "Suggest goals" has its own picker: it starts on the saved default and overrides only this generation.
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
 
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
   const [draft, setDraft] = React.useState<{ title: string; description: string; detailsText: string }>({
@@ -1079,6 +1093,7 @@ function RoadmapEditor({
     try {
       const idToken = await user.getIdToken();
       const suggestions = await suggestGoalsFromRoadmap(idToken, {
+        language: languageForRequest,
         categoryName: category.name,
         level,
         steps: steps.map((step) => ({ title: step.title, description: step.description })),
@@ -1120,9 +1135,10 @@ function RoadmapEditor({
         <Button size="sm" variant="outline" onClick={() => setImportOpen((v) => !v)}>
           <Import className="mr-1 h-3.5 w-3.5" /> Paste / import roadmap
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void suggestGoals()} disabled={goalsLoading || steps.length === 0}>
+        <Button size="sm" variant="outline" onClick={() => void suggestGoals()} disabled={goalsLoading || steps.length === 0 || !languageReady}>
           <Target className="mr-1 h-3.5 w-3.5" /> {goalsLoading ? "Thinking…" : "Suggest goals from this roadmap"}
         </Button>
+        <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || goalsLoading} />
       </div>
 
       {importOpen && (

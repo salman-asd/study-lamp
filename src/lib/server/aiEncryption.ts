@@ -13,10 +13,19 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96-bit IV, the size GCM is designed for
 const AUTH_TAG_LENGTH = 16;
 const KEY_ENV_VAR = "AI_CONNECTION_ENCRYPTION_KEY";
+const PREVIOUS_KEY_ENV_VAR = "AI_CONNECTION_ENCRYPTION_KEY_PREVIOUS";
 
 // Generate a key with: openssl rand -base64 32
 // Set it as a server-only env var (no NEXT_PUBLIC_ prefix), the same way
 // this repo already handles YOUTUBE_API_KEY / FACEBOOK_PAGE_ACCESS_TOKEN.
+function decodeKey(raw: string, name: string): Buffer {
+  const key = Buffer.from(raw, "base64");
+  if (key.length !== 32) {
+    throw new Error(`${name} must be a base64-encoded 32-byte key (AES-256).`);
+  }
+  return key;
+}
+
 function getKey(): Buffer {
   const raw = process.env[KEY_ENV_VAR];
   if (!raw) {
@@ -24,13 +33,7 @@ function getKey(): Buffer {
       `${KEY_ENV_VAR} is not configured. Generate one with "openssl rand -base64 32" and set it as a server-only environment variable.`
     );
   }
-
-  const key = Buffer.from(raw, "base64");
-  if (key.length !== 32) {
-    throw new Error(`${KEY_ENV_VAR} must be a base64-encoded 32-byte key (AES-256).`);
-  }
-
-  return key;
+  return decodeKey(raw, KEY_ENV_VAR);
 }
 
 /**
@@ -50,7 +53,7 @@ export function encryptApiKey(plaintext: string): string {
   // Single base64 blob: iv || authTag || ciphertext. Keeping everything
   // needed to decrypt in one field keeps the Firestore document shape
   // simple (see AiConnection.encryptedApiKey in src/types/index.ts).
-  return Buffer.concat([iv, authTag, ciphertext]).toString("base64");
+  return `v1:${Buffer.concat([iv, authTag, ciphertext]).toString("base64")}`;
 }
 
 /**
@@ -62,18 +65,37 @@ export function encryptApiKey(plaintext: string): string {
  * connection is broken," not silently ignore.
  */
 export function decryptApiKey(payload: string): string {
-  const key = getKey();
-  const raw = Buffer.from(payload, "base64");
+  const versioned = payload.startsWith("v1:");
+  if (!versioned && /^[a-z]\d*:/i.test(payload)) {
+    throw new Error("Unsupported encrypted credential version.");
+  }
+  const encoded = versioned ? payload.slice(3) : payload;
+  const raw = Buffer.from(encoded, "base64");
+  if (raw.length < IV_LENGTH + AUTH_TAG_LENGTH) throw new Error("Encrypted credential is invalid.");
 
-  const iv = raw.subarray(0, IV_LENGTH);
-  const authTag = raw.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
-  const ciphertext = raw.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+  for (const name of [KEY_ENV_VAR, PREVIOUS_KEY_ENV_VAR]) {
+    const configuredKey = process.env[name];
+    if (!configuredKey) continue;
+    let key: Buffer;
+    try {
+      key = decodeKey(configuredKey, name);
+    } catch {
+      continue;
+    }
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(authTag);
+    try {
+      const iv = raw.subarray(0, IV_LENGTH);
+      const authTag = raw.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+      const ciphertext = raw.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+      const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+      decipher.setAuthTag(authTag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+    } catch {
+      // Try the previous rotation key for older stored credentials.
+    }
+  }
 
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  return plaintext.toString("utf8");
+  throw new Error("Could not decrypt the stored credential with the configured encryption keys.");
 }
 
 /**

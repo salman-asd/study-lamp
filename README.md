@@ -67,9 +67,14 @@ watch-and-take-notes workflow.
 - Import PDF, Word (`.docx`), PowerPoint (`.pptx`), and Excel (`.xlsx`)
   files from Drive and run the same AI summary/quiz pipeline against
   their extracted text.
-- `.docx`/`.pptx`/`.xlsx` text is extracted by reading the OOXML zip
-  directly (no extra dependency); PDF extraction uses the `pdf-parse`
-  package.
+- Word documents open in an isolated in-app preview with a plain-text fallback;
+  Excel workbooks use a virtualized, searchable in-app sheet viewer. PowerPoint
+  continues to use Google Drive's preview.
+- `.docx` text uses Mammoth, `.pptx` text follows presentation order and
+  includes speaker notes, `.xlsx` uses SheetJS, and PDF text uses `unpdf`.
+- Extracted text is cached server-side against the Drive file checksum (or
+  modified time); Office ZIPs and document/text sizes are bounded during
+  extraction.
 
 **Onboarding**
 - Onboarding (interest selection) is optional, not a forced gate — new
@@ -92,7 +97,7 @@ watch-and-take-notes workflow.
 | Tours | `driver.js` |
 | Video | `react-youtube`, native `<video>` for Facebook/Drive/generic sources |
 | Transcripts | `youtube-transcript`, manual paste/upload for everything else |
-| Documents | `pdf-parse` (PDF), hand-rolled OOXML parsing (docx/pptx/xlsx) |
+| Documents | EmbedPDF, `docx-preview`, `unpdf`, `mammoth`, SheetJS from the official CDN |
 | Notifications | `sonner` (toasts) + an in-app notification bell |
 
 Firestore security rules live in `firestore.rules` at the repo root and
@@ -271,9 +276,8 @@ admin status is only granted via the `NEXT_PUBLIC_SEED_ADMIN_EMAILS` /
   exists as scaffolding (behind the `speechToTextEnabled` preference) but
   currently always throws — videos with no captions need a manually
   pasted or uploaded (`.srt`/`.vtt`) transcript.
-- **PDF extraction depends on `pdf-parse` actually being installed** — if
-  `npm install` hasn't pulled it in, PDF summary/quiz generation fails
-  with an explicit error rather than silently returning bad text.
+- **Scanned PDFs need OCR.** Text-only PDFs are supported; scanned pages
+  return a clear OCR-required message.
 - Notifications are in-app (bell icon) only — no email or push delivery.
 - Admin's user-list/analytics view is not yet built; today admin only
   manages shared playlist content.

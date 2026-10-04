@@ -1,5 +1,6 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 const CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -40,12 +41,18 @@ function headers(apiKey: string): HeadersInit {
   };
 }
 
-export async function generateWithOpenRouter(credentials: AiConnectionCredentials, prompt: string): Promise<string> {
+export function buildOpenRouterRequestBody(credentials: AiConnectionCredentials, prompt: string, options?: AiGenerateOptions) {
+  const settings = resolveAiGenerateOptions(options);
+  // JSON mode is model-dependent on OpenRouter, so JSON stays prompt-driven here.
+  return { model: credentials.model, messages: [{ role: "user", content: prompt }], temperature: settings.temperature, max_tokens: settings.maxOutputTokens };
+}
+
+export async function generateWithOpenRouter(credentials: AiConnectionCredentials, prompt: string, options?: AiGenerateOptions): Promise<string> {
   let res: Response;
   try {
     res = await withTimeout(GENERATE_TIMEOUT_MS, (signal) => fetch(CHAT_COMPLETIONS_URL, {
       method: "POST", signal, headers: headers(credentials.apiKey),
-      body: JSON.stringify({ model: credentials.model, messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 1800 }),
+      body: JSON.stringify(buildOpenRouterRequestBody(credentials, prompt, options)),
     }));
   } catch (err: any) {
     if (err?.name === "AbortError") throw new AiServiceError("timeout", "Timed out waiting for OpenRouter.");

@@ -31,6 +31,30 @@ const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
+const DRIVE_ID_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
+const DRIVE_CONNECTION_ID_PATTERN = /^[A-Za-z0-9]{10,40}$/;
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
+export function isValidDriveId(id: unknown): id is string {
+  return typeof id === "string" && DRIVE_ID_PATTERN.test(id);
+}
+
+export function assertDriveId(id: string): void {
+  if (!isValidDriveId(id)) throw new Error("Invalid Google Drive file or folder ID.");
+}
+
+export function isValidDriveConnectionId(id: unknown): id is string {
+  return typeof id === "string" && DRIVE_CONNECTION_ID_PATTERN.test(id);
+}
+
+export function sanitizeDriveFileName(name: string): string {
+  return name.replace(/[\\/\u0000-\u001f\u007f]/g, "").trim().slice(0, 200);
+}
+
+export function isSupportedUploadMimeType(mimeType: string): boolean {
+  return mimeType.startsWith(SUPPORTED_VIDEO_MIME_PREFIX) ||
+    SUPPORTED_DOCUMENT_MIME_TYPES.includes(mimeType as typeof SUPPORTED_DOCUMENT_MIME_TYPES[number]);
+}
 
 function env(name: string): string {
   const v = process.env[name];
@@ -60,26 +84,45 @@ export function buildRedirectUri(origin: string): string {
 // Signed (HMAC-SHA256) and short-lived (10 min) so it can't be forged or replayed.
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-export function signDriveState(uid: string): string {
-  const payload = `${uid}.${Date.now()}`;
+export function signDriveState(
+  uid: string,
+  nonce = crypto.randomBytes(32).toString("base64url"),
+  now = Date.now(),
+): string {
+  const payload = `${uid}.${now}.${nonce}`;
   const sig = crypto.createHmac("sha256", env("GOOGLE_DRIVE_OAUTH_STATE_SECRET")).update(payload).digest("hex");
   return Buffer.from(`${payload}.${sig}`).toString("base64url");
 }
 
-export function verifyDriveState(state: string): { uid: string } | null {
+export function verifyDriveState(
+  state: string,
+  expectedNonce: string | null,
+  now = Date.now(),
+): { uid: string; nonce: string } | null {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
     const parts = decoded.split(".");
-    if (parts.length !== 3) return null;
-    const [uid, tsRaw, sig] = parts;
-    const expected = crypto.createHmac("sha256", env("GOOGLE_DRIVE_OAUTH_STATE_SECRET")).update(`${uid}.${tsRaw}`).digest("hex");
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    if (parts.length !== 4) return null;
+    const [uid, tsRaw, nonce, sig] = parts;
+    const payload = `${uid}.${tsRaw}.${nonce}`;
+    const expected = crypto.createHmac("sha256", env("GOOGLE_DRIVE_OAUTH_STATE_SECRET")).update(payload).digest("hex");
+    const sigBuffer = Buffer.from(sig);
+    const expectedBuffer = Buffer.from(expected);
+    if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) return null;
     const ts = Number(tsRaw);
-    if (!Number.isFinite(ts) || Date.now() - ts > STATE_TTL_MS) return null;
-    return { uid };
+    const nonceBytes = Buffer.from(nonce, "base64url");
+    if (!uid || !Number.isFinite(ts) || ts > now || now - ts > STATE_TTL_MS || nonceBytes.length !== 32) return null;
+    if (!expectedNonce || !sameText(nonce, expectedNonce)) return null;
+    return { uid, nonce };
   } catch {
     return null;
   }
+}
+
+function sameText(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function buildAuthUrl(origin: string, state: string): string {
@@ -118,7 +161,7 @@ export async function exchangeCodeForTokens(code: string, origin: string): Promi
       grant_type: "authorization_code",
     }),
   });
-  if (!res.ok) throw new Error(`Google token exchange failed (${res.status}): ${await res.text().catch(() => "")}`);
+  if (!res.ok) throw new Error(`Google token exchange failed (${res.status}).`);
   return res.json();
 }
 
@@ -137,8 +180,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
     }),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    const err: any = new Error(`Google token refresh failed (${res.status}): ${body}`);
+    const err: any = new Error(`Google token refresh failed (${res.status}).`);
     err.driveAuthInvalid = res.status === 400 || res.status === 401;
     throw err;
   }
@@ -164,21 +206,31 @@ export interface DriveFileMeta {
   name: string;
   mimeType: string;
   size?: string;
+  md5Checksum?: string;
+  modifiedTime?: string;
   thumbnailLink?: string;
   videoMediaMetadata?: { durationMillis?: string; width?: number; height?: number };
   parents?: string[];
 }
 
-const FILE_FIELDS = "id,name,mimeType,size,thumbnailLink,videoMediaMetadata,parents";
+export class DriveApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "DriveApiError";
+  }
+}
+
+const FILE_FIELDS = "id,name,mimeType,size,md5Checksum,modifiedTime,thumbnailLink,videoMediaMetadata,parents";
 
 export async function getFileMetadata(accessToken: string, fileId: string): Promise<DriveFileMeta> {
+  assertDriveId(fileId);
   const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${FILE_FIELDS}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (res.status === 404) {
-    throw new Error("Drive can't access that file. Pick it again using the connected Google account.");
+    throw new DriveApiError(404, "Drive can't access that file. Pick it again using the connected Google account.");
   }
-  if (!res.ok) throw new Error(`Unable to read file metadata from Drive (${res.status}).`);
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to read file metadata from Drive (${res.status}).`);
   return res.json();
 }
 
@@ -188,19 +240,38 @@ export async function listFolderVideoFiles(accessToken: string, folderId: string
   return listFolderFiles(accessToken, folderId, "mimeType contains 'video/'");
 }
 
+/** True when the app can see at least one direct child of the folder (of any type).
+ *  With the narrow drive.file scope a picked folder's children are NOT automatically
+ *  visible, so "zero children" means "ask the user to pick the files" rather than "empty". */
+export async function folderHasVisibleChildren(accessToken: string, folderId: string): Promise<boolean> {
+  assertDriveId(folderId);
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+  const res = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id)&pageSize=1&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 401) throw new DriveApiError(401, "Google Drive rejected the access token.");
+  // Only 403/404 mean "this app cannot see the folder's contents". A transient 5xx or 429
+  // must NOT look like that, or it would wrongly trigger the Picker fallback.
+  if (res.status === 403 || res.status === 404) return false;
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to check the Drive folder's contents (${res.status}).`);
+  const data = await res.json();
+  return Array.isArray(data.files) && data.files.length > 0;
+}
+
 export async function listFolderDocumentFiles(accessToken: string, folderId: string): Promise<DriveFileMeta[]> {
   const mimeQuery = SUPPORTED_DOCUMENT_MIME_TYPES.map((m) => `mimeType = '${m}'`).join(" or ");
   return listFolderFiles(accessToken, folderId, `(${mimeQuery})`);
 }
 
 async function listFolderFiles(accessToken: string, folderId: string, mimeClause: string): Promise<DriveFileMeta[]> {
+  assertDriveId(folderId);
   const files: DriveFileMeta[] = [];
   let pageToken: string | undefined;
   do {
     const q = encodeURIComponent(`'${folderId}' in parents and trashed = false and ${mimeClause}`);
     const url = `${DRIVE_API}/files?q=${q}&fields=nextPageToken,files(${FILE_FIELDS})&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true${pageToken ? `&pageToken=${pageToken}` : ""}`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!res.ok) throw new Error(`Unable to list the Drive folder's contents (${res.status}).`);
+    if (!res.ok) throw new DriveApiError(res.status, `Unable to list the Drive folder's contents (${res.status}).`);
     const data = await res.json();
     files.push(...(data.files || []));
     pageToken = data.nextPageToken;
@@ -213,6 +284,7 @@ async function listFolderFiles(accessToken: string, folderId: string, mimeClause
  *  seeking and resumable downloads. Returns the raw fetch Response — the
  *  caller pipes .body straight through rather than buffering it. */
 export async function fetchFileContent(accessToken: string, fileId: string, range?: string | null): Promise<Response> {
+  assertDriveId(fileId);
   const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
   if (range) headers.Range = range;
   return fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers });
@@ -232,17 +304,22 @@ export async function getOrCreateBackupFolder(accessToken: string): Promise<stri
     "name = 'Study Lamp Backups' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'root' in parents"
   );
   const res = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (res.status === 401) throw new DriveApiError(401, "Google Drive rejected the access token.");
   if (res.ok) {
     const data = await res.json();
-    if (data.files?.[0]?.id) return data.files[0].id;
+    if (data.files?.[0]?.id) {
+      assertDriveId(data.files[0].id);
+      return data.files[0].id;
+    }
   }
   const createRes = await fetch(`${DRIVE_API}/files`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "Study Lamp Backups", mimeType: "application/vnd.google-apps.folder" }),
   });
-  if (!createRes.ok) throw new Error("Unable to create the Study Lamp Backups folder in Drive.");
+  if (!createRes.ok) throw new DriveApiError(createRes.status, "Unable to create the Study Lamp Backups folder in Drive.");
   const created = await createRes.json();
+  assertDriveId(created.id);
   return created.id;
 }
 
@@ -254,6 +331,7 @@ export async function listBackupFiles(accessToken: string, folderId: string): Pr
  *  upload — fine for backups, which are plain JSON text well under Drive's
  *  5MB simple-upload-friendly size in nearly every real account). */
 export async function uploadJsonFile(accessToken: string, folderId: string, name: string, json: unknown): Promise<DriveFileMeta> {
+  assertDriveId(folderId);
   const boundary = `slboundary${crypto.randomBytes(8).toString("hex")}`;
   const metadata = JSON.stringify({ name, parents: [folderId], mimeType: "application/json" });
   const body =
@@ -266,13 +344,13 @@ export async function uploadJsonFile(accessToken: string, folderId: string, name
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
     body,
   });
-  if (!res.ok) throw new Error(`Unable to upload backup to Drive (${res.status}).`);
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to upload backup to Drive (${res.status}).`);
   return res.json();
 }
 
 export async function downloadJsonFile(accessToken: string, fileId: string): Promise<unknown> {
   const res = await fetchFileContent(accessToken, fileId, null);
-  if (!res.ok) throw new Error(`Unable to download backup from Drive (${res.status}).`);
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to download backup from Drive (${res.status}).`);
   return res.json();
 }
 
@@ -284,18 +362,25 @@ export async function downloadJsonFile(accessToken: string, fileId: string): Pro
  *  server (avoids platform body-size/time limits for large videos). */
 export async function startResumableUpload(
   accessToken: string,
-  input: { name: string; mimeType: string; folderId?: string | null }
+  input: { name: string; mimeType: string; folderId?: string | null; sizeBytes: number }
 ): Promise<string> {
+  if (input.folderId) assertDriveId(input.folderId);
+  if (!isSupportedUploadMimeType(input.mimeType) || !Number.isInteger(input.sizeBytes) || input.sizeBytes < 1 || input.sizeBytes > MAX_UPLOAD_BYTES) {
+    throw new Error("Invalid upload type or size.");
+  }
+  const name = sanitizeDriveFileName(input.name);
+  if (!name) throw new Error("Invalid upload filename.");
   const res = await fetch(`${DRIVE_UPLOAD_API}?uploadType=resumable`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json; charset=UTF-8",
       "X-Upload-Content-Type": input.mimeType,
+      "X-Upload-Content-Length": String(input.sizeBytes),
     },
-    body: JSON.stringify({ name: input.name, ...(input.folderId ? { parents: [input.folderId] } : {}) }),
+    body: JSON.stringify({ name, ...(input.folderId ? { parents: [input.folderId] } : {}) }),
   });
-  if (!res.ok) throw new Error(`Unable to start a Drive upload session (${res.status}): ${await res.text().catch(() => "")}`);
+  if (!res.ok) throw new DriveApiError(res.status, `Unable to start a Drive upload session (${res.status}).`);
   const location = res.headers.get("Location") || res.headers.get("location");
   if (!location) throw new Error("Drive did not return an upload session URL.");
   return location;

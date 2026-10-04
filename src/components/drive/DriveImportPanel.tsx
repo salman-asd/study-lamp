@@ -5,11 +5,13 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { DrivePickerButton, type DrivePickerSelection } from "@/components/drive/DrivePickerButton";
+import { DrivePickerButton, openFolderChildrenPicker, type DrivePickerSelection } from "@/components/drive/DrivePickerButton";
+import type { DrivePickerKind } from "@/lib/driveMime";
 import {
-  listDriveConnections, importDriveFile, importDriveFolder,
-  startDriveUploadSession, uploadFileToDrive,
+  listDriveConnections, importDriveFile, importDriveFiles, importDriveFolder,
+  startDriveUploadSession, uploadFileToDrive, type DriveImportTarget,
 } from "@/lib/driveClient";
+import { summarizeBulkImport } from "@/lib/driveImportSummary";
 import type { DriveConnectionSummary } from "@/types";
 import { toast } from "sonner";
 import { UploadCloud } from "lucide-react";
@@ -26,18 +28,19 @@ export function DriveImportPanel({
   onImported,
   accept,
   allowFolders = true,
+  kinds,
 }: {
   /** Target playlist for a picked/uploaded *video*. Documents ignore this. */
   playlistId?: string;
   onImported: () => void;
-  /** Restricts the upload <input>'s file picker; Picker itself always shows
-   *  both videos and documents since Google doesn't let us filter by our
-   *  own mime allowlist there. */
+  /** Restricts the upload <input>'s file picker. `kinds` also applies the
+   *  corresponding MIME filter to the Google Picker views. */
   accept?: string;
   /** Study Materials passes false — folder import only knows how to create
    *  a video playlist today (see /api/drive/import/folder), so offering
    *  folder selection there would silently do the wrong thing. */
   allowFolders?: boolean;
+  kinds?: DrivePickerKind[];
 }) {
   const { user } = useAuth();
   const [connections, setConnections] = React.useState<DriveConnectionSummary[]>([]);
@@ -61,18 +64,66 @@ export function DriveImportPanel({
     })();
   }, [user]);
 
-  async function handlePicked(selection: DrivePickerSelection) {
-    if (!user || !connectionId) return;
+  /** Where picked FILES go: documents for Study Materials, else the given playlist, else Unsorted. */
+  function fileTarget(): DriveImportTarget {
+    const videoKinds = !kinds || kinds.includes("video");
+    if (!videoKinds) return { type: "documents" };
+    return playlistId ? { type: "existing_playlist", playlistId } : { type: "unsorted" };
+  }
+
+  async function importFilesInOneRequest(idToken: string, fileIds: string[], target: DriveImportTarget) {
+    if (!connectionId || fileIds.length === 0) return;
+    const result = await importDriveFiles(idToken, { connectionId, fileIds, target });
+    const message = summarizeBulkImport(result);
+    if (result.addedVideos + result.addedDocuments > 0) toast.success(message);
+    else toast.info(message);
+  }
+
+  async function handlePicked(selections: DrivePickerSelection[] | DrivePickerSelection) {
+    const items = Array.isArray(selections) ? selections : [selections];
+    if (!user || !connectionId || items.length === 0) return;
     setBusy(true);
     try {
       const idToken = await user.getIdToken();
-      if (selection.isFolder) {
-        const result = await importDriveFolder(idToken, { connectionId, folderId: selection.id });
-        toast.success(`Imported "${selection.name}" as a new playlist (${result.videoCount} videos).`);
-      } else {
-        await importDriveFile(idToken, { connectionId, fileId: selection.id, playlistId });
-        toast.success(`Imported "${selection.name}".`);
+      const folders = items.filter((selection) => selection.isFolder);
+      const files = items.filter((selection) => !selection.isFolder);
+
+      // A whole multi-select is ONE bulk request (not one request per file).
+      await importFilesInOneRequest(idToken, files.map((file) => file.id), fileTarget());
+
+      for (const folder of folders) {
+        const result = await importDriveFolder(idToken, { connectionId, folderId: folder.id });
+        if (result.needsSelection) {
+          // Google hides this folder's children from the app: reopen the Picker scoped to it.
+          const { folderId, folderName } = result;
+          toast.info(`Select the files to import from "${folderName}" in the next window.`);
+          await openFolderChildrenPicker({
+            idToken,
+            connectionId,
+            folderId,
+            folderName,
+            kinds: ["video"],
+            onPicked: (picked) => { void importFolderSelection(folderName, picked); },
+          });
+        } else {
+          toast.success(`Imported folder "${folder.name}" (${result.videoCount} videos).`);
+        }
       }
+      onImported();
+    } catch (error: any) {
+      toast.error(error?.message || "Import from Drive failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Files chosen in the folder-scoped Picker land in a new playlist named after the folder. */
+  async function importFolderSelection(folderName: string, picked: DrivePickerSelection[]) {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      await importFilesInOneRequest(idToken, picked.filter((file) => !file.isFolder).map((file) => file.id), { type: "new_playlist", title: folderName });
       onImported();
     } catch (error: any) {
       toast.error(error?.message || "Import from Drive failed.");
@@ -87,7 +138,7 @@ export function DriveImportPanel({
     setUploadPct(0);
     try {
       const idToken = await user.getIdToken();
-      const uploadUrl = await startDriveUploadSession(idToken, { connectionId, name: file.name, mimeType: file.type });
+      const uploadUrl = await startDriveUploadSession(idToken, { connectionId, name: file.name, mimeType: file.type, sizeBytes: file.size });
       const uploaded = await uploadFileToDrive(uploadUrl, file, setUploadPct);
       await importDriveFile(idToken, { connectionId, fileId: uploaded.id, playlistId });
       toast.success(`Uploaded and saved "${file.name}".`);
@@ -129,7 +180,13 @@ export function DriveImportPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         {connectionId && (
-          <DrivePickerButton connectionId={connectionId} onPicked={handlePicked} label="Pick from Drive" allowFolders={allowFolders} />
+          <DrivePickerButton
+            connectionId={connectionId}
+            onPicked={handlePicked}
+            label="Pick from Drive"
+            allowFolders={allowFolders}
+            kinds={kinds ?? (allowFolders ? ["video"] : ["pdf", "docx", "pptx", "xlsx"])}
+          />
         )}
         <Button type="button" variant="outline" className="gap-1.5" disabled={busy} onClick={() => fileInputRef.current?.click()}>
           <UploadCloud className="h-4 w-4" /> Upload to Drive
@@ -142,6 +199,12 @@ export function DriveImportPanel({
           onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadFile(file); }}
         />
       </div>
+
+      {allowFolders && (
+        <p className="text-xs text-muted-foreground">
+          Google only shares files you pick. If your folder shows no files, select them in the next window.
+        </p>
+      )}
 
       {uploadPct !== null && (
         <div className="space-y-1">

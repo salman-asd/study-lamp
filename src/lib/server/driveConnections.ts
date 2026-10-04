@@ -2,6 +2,8 @@ import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
 import { refreshAccessToken, revokeToken } from "@/lib/server/googleDrive";
+import { DriveTokenCache } from "@/lib/server/driveTokenCache";
+import { runWithDriveToken } from "@/lib/server/driveRequest";
 import type { DriveConnection, DriveConnectionSummary } from "@/types";
 
 // Server-only. Mirrors src/lib/server/aiConnections.ts exactly: writes go to
@@ -9,6 +11,33 @@ import type { DriveConnection, DriveConnectionSummary } from "@/types";
 // in — firestore.rules denies this subcollection to the client SDK entirely
 // (see the "driveConnections" match block), so every check here is the only
 // backstop, same reasoning as the AI connections module.
+
+const accessTokenCache = new DriveTokenCache(500, 60_000);
+const lastUsedWriteAt = new Map<string, number>();
+const LAST_USED_WRITE_INTERVAL_MS = 15 * 60_000;
+
+function accessTokenCacheKey(uid: string, connectionId: string): string {
+  return `${uid}:${connectionId}`;
+}
+
+export function invalidateAccessToken(uid: string, connectionId: string): void {
+  const key = accessTokenCacheKey(uid, connectionId);
+  accessTokenCache.invalidate(key);
+  lastUsedWriteAt.delete(key);
+}
+
+export async function withDriveAccessToken<T>(
+  uid: string,
+  connectionId: string,
+  operation: (accessToken: string) => Promise<T>,
+  tokenProvider: () => Promise<string> = () => getAccessTokenForConnection(uid, connectionId),
+): Promise<T> {
+  return runWithDriveToken(
+    tokenProvider,
+    () => invalidateAccessToken(uid, connectionId),
+    operation,
+  );
+}
 
 function connectionsRef(uid: string) {
   return adminDb.collection("users").doc(uid).collection("driveConnections");
@@ -62,12 +91,14 @@ export async function upsertDriveConnection(
   if (!existing.empty) {
     const ref = existing.docs[0].ref;
     await ref.set({ ...doc, createdAt: existing.docs[0].data().createdAt }, { merge: true });
+    invalidateAccessToken(uid, ref.id);
     const snap = await ref.get();
     return toSummary(snap.id, snap.data()!);
   }
 
   const ref = connectionsRef(uid).doc();
   await ref.set(doc);
+  invalidateAccessToken(uid, ref.id);
   const snap = await ref.get();
   return toSummary(snap.id, snap.data()!);
 }
@@ -82,39 +113,65 @@ export async function deleteDriveConnection(uid: string, connectionId: string): 
   const ref = connectionsRef(uid).doc(connectionId);
   const snap = await ref.get();
   if (!snap.exists) return false;
+  invalidateAccessToken(uid, connectionId);
   const refreshToken = decryptApiKey(snap.data()!.encryptedRefreshToken);
   await revokeToken(refreshToken);
   await ref.delete();
   return true;
 }
 
-/** Returns a fresh access token for this connection, refreshing it via
- *  Google every call (access tokens are ~1hr and we don't cache them
- *  server-side to keep this module stateless). Marks the connection
- *  "invalid" if Google rejects the refresh token (e.g. the user revoked
- *  access from their Google Account, or it expired from disuse). */
-export async function getAccessTokenForConnection(uid: string, connectionId: string): Promise<string> {
-  const ref = connectionsRef(uid).doc(connectionId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new DriveConnectionError("not_found", "This Google Drive connection no longer exists. Reconnect it in Settings → Google Drive.");
+export interface DriveAccessTokenDependencies {
+  refreshAccessToken: typeof refreshAccessToken;
+}
 
-  const data = snap.data()!;
-  if (data.status === "invalid") {
-    throw new DriveConnectionError("invalid", "This Google Drive connection needs to be reconnected in Settings → Google Drive.");
-  }
+/** Returns a cached access token when it has more than 60 seconds remaining.
+ *  The cache is per server instance; revocation is observed at expiry unless
+ *  an API request returns 401, in which case the entry is invalidated. */
+export async function getAccessTokenForConnection(
+  uid: string,
+  connectionId: string,
+  dependencies: Partial<DriveAccessTokenDependencies> = {},
+): Promise<string> {
+  const key = accessTokenCacheKey(uid, connectionId);
+  return accessTokenCache.get(key, async () => {
+    const ref = connectionsRef(uid).doc(connectionId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new DriveConnectionError("not_found", "This Google Drive connection no longer exists. Reconnect it in Settings → Google Drive.");
 
-  const refreshToken = decryptApiKey(data.encryptedRefreshToken);
-  try {
-    const { accessToken } = await refreshAccessToken(refreshToken);
-    await ref.update({ lastUsedAt: admin.firestore.FieldValue.serverTimestamp() });
-    return accessToken;
-  } catch (err: any) {
-    if (err?.driveAuthInvalid) {
-      await ref.update({ status: "invalid" });
+    const data = snap.data()!;
+    if (data.status === "invalid") {
       throw new DriveConnectionError("invalid", "This Google Drive connection needs to be reconnected in Settings → Google Drive.");
     }
-    throw new DriveConnectionError("network", "Couldn't reach Google Drive. Try again in a moment.");
-  }
+
+    const refreshToken = decryptApiKey(data.encryptedRefreshToken);
+    try {
+      const refresh = dependencies.refreshAccessToken ?? refreshAccessToken;
+      const { accessToken, expiresIn } = await refresh(refreshToken);
+      const now = Date.now();
+      const storedLastUsedAt = typeof data.lastUsedAt?.toMillis === "function" ? data.lastUsedAt.toMillis() : 0;
+      const lastWrittenAt = Math.max(storedLastUsedAt, lastUsedWriteAt.get(key) ?? 0);
+      if (now - lastWrittenAt >= LAST_USED_WRITE_INTERVAL_MS) {
+        try {
+          await ref.update({ lastUsedAt: admin.firestore.FieldValue.serverTimestamp() });
+          lastUsedWriteAt.set(key, now);
+          if (lastUsedWriteAt.size > 1000) {
+            const oldestKey = lastUsedWriteAt.keys().next().value;
+            if (oldestKey) lastUsedWriteAt.delete(oldestKey);
+          }
+        } catch {
+          // Usage metadata must not prevent playback when the token is valid.
+        }
+      }
+      return { token: accessToken, expiresAt: now + Math.max(0, expiresIn) * 1000 };
+    } catch (error: any) {
+      if (error?.driveAuthInvalid) {
+        invalidateAccessToken(uid, connectionId);
+        await ref.update({ status: "invalid" });
+        throw new DriveConnectionError("invalid", "This Google Drive connection needs to be reconnected in Settings → Google Drive.");
+      }
+      throw new DriveConnectionError("network", "Couldn't reach Google Drive. Try again in a moment.");
+    }
+  });
 }
 
 export class DriveConnectionError extends Error {

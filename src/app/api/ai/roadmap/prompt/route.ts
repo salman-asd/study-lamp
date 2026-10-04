@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { buildRoadmapStepsPrompt } from "@/lib/ai/aiService";
+import { buildRoadmapStepsPrompt, withResponseLanguage } from "@/lib/ai/aiService";
 import type { RoadmapLevel } from "@/types";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 // No AI call here — this just returns the exact prompt text the generate
 // route would send, so a user can copy it, run it in a different AI tool,
 // and paste the reply back in via "Customize" -> paste/import.
+// Calls an AI model; adjust to the deployment plan limit.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -16,11 +20,13 @@ export async function POST(req: NextRequest) {
   const categoryName = String(body?.categoryName ?? "").trim() || "Learning topic";
   const level = body?.level as RoadmapLevel;
   const subtopics: string[] = Array.isArray(body?.subtopics) ? body.subtopics.map((s: any) => String(s).trim()).filter(Boolean) : [];
+  const language = await resolveAiLanguage(uid, body?.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
 
   if (!["basic", "intermediate", "advanced"].includes(level)) {
     return NextResponse.json({ error: "A valid level is required." }, { status: 400 });
   }
 
-  const prompt = buildRoadmapStepsPrompt({ categoryName, level, subtopics });
+  const prompt = withResponseLanguage(buildRoadmapStepsPrompt({ categoryName, level, subtopics }), language);
   return NextResponse.json({ prompt }, { headers: { "Cache-Control": "private, no-store" } });
 }

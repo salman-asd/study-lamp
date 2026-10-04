@@ -5,7 +5,7 @@ import YouTube, { type YouTubeProps, type YouTubePlayer } from "react-youtube";
 import { detectVideoPlatform, generateCanonicalUrl, generateEmbedUrl } from "@/lib/video-platforms";
 import { FacebookEmbed } from "./FacebookEmbed";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { driveStreamUrl } from "@/lib/driveClient";
+import { getSignedDriveUrls } from "@/lib/driveClient";
 
 interface Props {
   youtubeVideoId?: string | null;
@@ -28,7 +28,7 @@ interface Props {
  * Google Drive renders through YouTubeOrEmbedPlayer (unchanged — see its own
  * doc comment); a platform === "google_drive" video renders through
  * DriveVideoPlayer instead, since Study Lamp holds the Drive credentials
- * needed to fetch it securely (see /api/drive/stream/[fileId]) rather than
+ * needed to sign a short-lived stream URL (see /api/drive/stream/[fileId]) rather than
  * relying on a public embeddable URL the way every other platform does.
  */
 export function VideoPlayer({ youtubeVideoId, videoUrl, platform, driveFileId, driveConnectionId, startSeconds = 0, autoPlay = false, className, onProgress, onPause, onEnded }: Props) {
@@ -65,7 +65,7 @@ export function VideoPlayer({ youtubeVideoId, videoUrl, platform, driveFileId, d
  * Secure playback for a Drive-hosted video (Phase 16): a plain native
  * <video> tag pointed at the ownership-checked stream proxy
  * (/api/drive/stream/[fileId]) — never a direct Drive URL, and no OAuth
- * token ever reaches the browser. The proxy forwards Range headers, so
+ * token. The signed URL is a short-lived capability. The proxy forwards Range headers, so
  * seeking/scrubbing works exactly like a normal <video src> would against
  * any other file host.
  *
@@ -90,24 +90,55 @@ function DriveVideoPlayer({
   const { user } = useAuth();
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const lastSaveRef = React.useRef(0);
-  // idToken is appended as a query param since a bare <video src> can't
-  // carry an Authorization header — the stream proxy's requireAuthenticatedUid
-  // check reads it from there for this one route (see the route's own
-  // handling). A fresh short-lived token is fetched on mount / video change
-  // only, not on every render.
+  const lastFlushRef = React.useRef(0);
+  const onProgressRef = React.useRef(onProgress);
+  onProgressRef.current = onProgress;
   const [authedSrc, setAuthedSrc] = React.useState<string | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let active = true;
     (async () => {
+      setAuthedSrc(null);
+      setLoadError(null);
       if (!user) return;
-      const idToken = await user.getIdToken();
-      if (!active) return;
-      const base = driveStreamUrl(driveFileId, driveConnectionId);
-      setAuthedSrc(`${base}&idToken=${encodeURIComponent(idToken)}`);
+      try {
+        const idToken = await user.getIdToken();
+        const [signedUrl] = await getSignedDriveUrls(idToken, user.uid, [{
+          fileId: driveFileId,
+          connectionId: driveConnectionId,
+          purpose: "stream",
+        }]);
+        if (active) setAuthedSrc(signedUrl);
+      } catch {
+        if (active) setLoadError("Couldn't load this video from Google Drive.");
+      }
     })();
     return () => { active = false; };
   }, [user, driveFileId, driveConnectionId]);
+
+  const flushProgress = React.useCallback(() => {
+    const video = videoRef.current;
+    const now = Date.now();
+    if (!video || now - lastFlushRef.current < 1000) return;
+    lastFlushRef.current = now;
+    onProgressRef.current(video.currentTime, video.duration || 0, true);
+  }, []);
+
+  React.useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") flushProgress();
+    }
+    window.addEventListener("pagehide", flushProgress);
+    window.addEventListener("beforeunload", flushProgress);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushProgress);
+      window.removeEventListener("beforeunload", flushProgress);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      flushProgress();
+    };
+  }, [flushProgress]);
 
   function handleLoadedMetadata() {
     const el = videoRef.current;
@@ -140,7 +171,7 @@ function DriveVideoPlayer({
   if (!authedSrc) {
     return (
       <div className={['flex aspect-video w-full items-center justify-center rounded-xl bg-black', className].filter(Boolean).join(' ')}>
-        <p className="text-sm text-muted-foreground">Loading from Google Drive…</p>
+        <p className="text-sm text-muted-foreground">{loadError || "Loading from Google Drive…"}</p>
       </div>
     );
   }

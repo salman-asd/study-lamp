@@ -1,6 +1,8 @@
 import type { QuizQuestion } from "@/types";
+import type { AiLanguage } from "@/lib/ai/types";
 
 export interface GenerateQuizInput {
+  language?: AiLanguage;
   youtubeVideoId?: string;
   /** Phase 4 (roadmap v3): a manually pasted/uploaded transcript, used when
    *  there's no YouTube video (or no captions) to fall back on. */

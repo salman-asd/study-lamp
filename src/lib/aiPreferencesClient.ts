@@ -1,5 +1,6 @@
 export interface AiPreferences {
   speechToTextEnabled: boolean;
+  generatingLanguage: "en" | "bn";
 }
 
 export interface AiQuotaSummary {
@@ -23,7 +24,7 @@ export function getAiPreferences(idToken: string) {
   return request(idToken);
 }
 
-export function updateAiPreferences(idToken: string, preferences: AiPreferences) {
+export function updateAiPreferences(idToken: string, preferences: Partial<AiPreferences>) {
   return request(idToken, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

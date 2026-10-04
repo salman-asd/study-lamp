@@ -1,4 +1,4 @@
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { deleteDoc, deleteField, doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { normalizeNoteContent } from "@/lib/noteUtils";
 import { needsMigration, normalizeSummaryContent } from "@/lib/richText";
@@ -9,14 +9,20 @@ export async function getNote(uid: string, videoId: string): Promise<VideoNote |
   return snap.exists() ? (snap.data() as VideoNote) : null;
 }
 
-export async function saveNote(uid: string, videoId: string, content: string) {
+export async function saveNote(uid: string, videoId: string, content: string, pageNumber?: number | null) {
   const normalized = normalizeNoteContent(content);
   if (!normalized) {
     await deleteNote(uid, videoId);
     return;
   }
 
-  await setDoc(doc(db, "users", uid, "notes", videoId), { videoId, content: normalized, updatedAt: serverTimestamp() }, { merge: true });
+  const pageField = pageNumber === undefined ? {} : pageNumber === null ? { pageNumber: deleteField() } : { pageNumber };
+  await setDoc(doc(db, "users", uid, "notes", videoId), {
+    videoId,
+    content: normalized,
+    ...pageField,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export async function deleteNote(uid: string, videoId: string) {

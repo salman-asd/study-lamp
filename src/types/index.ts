@@ -300,6 +300,7 @@ export interface UserVideoState {
 export interface VideoNote {
   videoId: string;
   content: string;
+  pageNumber?: number | null;
   updatedAt: Timestamp | null;
 }
 
@@ -343,9 +344,18 @@ export interface QuizAttempt {
   userId: string;
   videoId: string;
   categoryId?: string | null;
+  playlistId?: string;
+  source?: "shared" | "personal" | "document";
+  answers?: QuizAttemptAnswer[];
   score: number;
   totalQuestions: number;
   completedAt: Timestamp | null;
+}
+
+export interface QuizAttemptAnswer {
+  questionId: string;
+  chosenOptionId: string;
+  wasCorrect: boolean;
 }
 
 export type AiProvider = "gemini" | "openai" | "anthropic" | "openrouter" | "groq";
@@ -473,6 +483,11 @@ export interface PersonalVideo {
   videoUrl: string;
   youtubeVideoId?: string | null;
   thumbnailUrl: string;
+  /** @deprecated Legacy base64 thumbnail. Bytes now live in users/{uid}/driveThumbs
+   *  (server-only); `thumbnailUrl` is a marker resolved via a signed URL. Cleared by
+   *  POST /api/drive/thumbnails/backfill. Do not read this field. */
+  thumbnailData?: string | null;
+  thumbnailAttemptedAt?: Timestamp | null;
   durationSeconds?: number;
   description?: string | null;
   categoryId?: string | null;
@@ -492,8 +507,9 @@ export interface PersonalVideo {
   priorityOrder?: number | null;
   /** Set only when platform === "google_drive" (Phase 14/16). The video's
    *  bytes live in Google Drive, not at videoUrl — playback goes through
-   *  the ownership-checked proxy at /api/drive/stream/[fileId], never a
-   *  direct Drive URL or token in the browser. driveConnectionId records
+   *  the signed proxy at /api/drive/stream/[fileId], never a direct Drive
+   *  URL or OAuth token in the browser. Ownership is checked when signing.
+   *  driveConnectionId records
    *  which of the owner's linked Google accounts holds the file, since a
    *  user may connect more than one (Phase 13). */
   driveFileId?: string | null;
@@ -569,8 +585,27 @@ export interface PersonalDocument {
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;
+  /** Marker (see driveThumbnailMarker), resolved to a signed URL by the client.
+   *  Absent on documents imported before R3 — derive it from the Drive ids. */
+  thumbnailUrl?: string | null;
+  /** @deprecated Legacy base64 thumbnail; see PersonalVideo.thumbnailData. Do not read. */
+  thumbnailData?: string | null;
+  thumbnailAttemptedAt?: Timestamp | null;
   categoryId?: string | null;
   tagIds?: string[];
+  readerProgress?: {
+    /** PDF page (1-based); always 1 for DOCX/XLSX. */
+    lastPage: number;
+    /** Zoom factor 0.1..10. */
+    zoom: number;
+    /** DOCX vertical position, 0..1. */
+    scrollRatio?: number;
+    /** XLSX active sheet (0-based). */
+    sheetIndex?: number;
+    /** XLSX first visible data row (0-based). */
+    rowIndex?: number;
+    updatedAt: Timestamp | null;
+  } | null;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }

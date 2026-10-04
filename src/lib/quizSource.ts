@@ -10,6 +10,11 @@
  * caller without a transcript concept (src/app/api/documents/[id]/quiz/route.ts)
  * doesn't need to change.
  */
+/**
+ * @deprecated 32-bit FNV hash with no language or prompt version. Servers use
+ * buildSourceHash() from src/lib/server/sourceHash.ts (SHA-256). Kept exported
+ * for backward compatibility; quizzes cached under this hash regenerate once.
+ */
 export function buildVideoSourceHash(
   title: string,
   description?: string | null,
@@ -23,4 +28,9 @@ export function buildVideoSourceHash(
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16);
+}
+
+/** @deprecated Server code uses hashDocumentText() from src/lib/server/sourceHash.ts (SHA-256). */
+export function hashDocumentText(text: string): string {
+  return buildVideoSourceHash("", null, null, text);
 }

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { generateVideoQuiz, AiServiceError, type AiErrorCode } from "@/lib/ai/aiService";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
-import { buildVideoSourceHash } from "@/lib/quizSource";
+import { buildSourceHash } from "@/lib/server/sourceHash";
 import { getDocumentQuiz, saveDocumentQuiz } from "@/lib/server/quiz";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
+import { ScannedPdfError } from "@/lib/server/documentText";
+import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 
 interface RouteParams {
   params: { id: string };
@@ -19,6 +21,9 @@ const STATUS_BY_CODE: Record<AiErrorCode, number> = {
 // (see quizSource.ts and src/lib/server/quiz.ts's document-specific
 // get/saveDocumentQuiz), same generateVideoQuiz() call — a document's
 // extracted text takes the transcript's place.
+// Calls an AI model; adjust to the deployment plan limit.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const uid = await requireAuthenticatedUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,18 +37,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   } catch {
     // no body is fine — summary is optional, used only for the cache key
   }
+  const language = await resolveAiLanguage(uid, body.language);
+  if (!language) return NextResponse.json({ error: "language must be en or bn." }, { status: 400 });
   const summary = typeof body.summary === "string" ? body.summary : null;
-  const sourceHash = buildVideoSourceHash(doc.title, null, summary);
-
-  const cached = await getDocumentQuiz(uid, doc.id).catch(() => null);
-  if (cached && cached.sourceHash === sourceHash) {
-    return NextResponse.json({ questions: cached.questions }, { headers: { "Cache-Control": "private, no-store" } });
-  }
-
   try {
     const text = await extractPersonalDocumentText(uid, doc);
+    const sourceHash = buildSourceHash({ kind: "document-quiz", title: doc.title, summary, text, language });
+    const cached = await getDocumentQuiz(uid, doc.id).catch(() => null);
+    if (cached && cached.sourceHash === sourceHash) {
+      return NextResponse.json({ questions: cached.questions }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+
     const questions = await withAiConnection(uid, async (apiKey, provider, model) => {
-      return await generateVideoQuiz({ provider, apiKey, model }, { title: doc.title, description: null, transcript: text, summary });
+      return await generateVideoQuiz({ provider, apiKey, model, language }, { title: doc.title, description: null, transcript: text, summary });
     });
 
     try {
@@ -54,10 +60,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ questions }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
+    if (err instanceof ScannedPdfError) return NextResponse.json({ error: err.message }, { status: 422 });
     if (err instanceof AiServiceError) {
-      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] });
+      const status = STATUS_BY_CODE[err.code];
+      return NextResponse.json({ error: status >= 500 ? "Something went wrong generating a quiz." : err.message }, { status });
     }
     console.error("Unexpected error generating document quiz", err);
-    return NextResponse.json({ error: err?.message || "Something went wrong generating a quiz." }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong generating a quiz." }, { status: 500 });
   }
 }

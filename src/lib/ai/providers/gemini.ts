@@ -1,10 +1,11 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 /**
  * Gemini adapter. This is the ONLY file in the codebase that should know:
  *   - Gemini's request/response JSON shape
- *   - Gemini's auth mechanism (API key as a query param)
+ *   - Gemini's auth mechanism (x-goog-api-key header)
  *   - Gemini's model-path URL format
  *   - how to turn a Gemini error/HTTP status into an AiServiceError
  *
@@ -92,35 +93,67 @@ function parseGenerateContentResponse(body: any): string {
  * answer. Callers should go through aiService.generateVideoSummary rather
  * than calling this directly.
  */
+/** Gemini 2.5-series models spend "thinking" tokens from the maxOutputTokens budget. */
+export function isGemini25Model(model: string): boolean {
+  return model.includes("gemini-2.5");
+}
+
+/** Request body for generateContent. `thinkingConfig` is only added for 2.5 models when thinking should be off. */
+export function buildGeminiRequestBody(
+  credentials: AiConnectionCredentials,
+  prompt: string,
+  options: AiGenerateOptions | undefined,
+  includeThinkingConfig = true,
+) {
+  const settings = resolveAiGenerateOptions(options);
+  return {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxOutputTokens,
+      // Gemini's JSON mode accepts array roots too.
+      ...(settings.json ? { responseMimeType: "application/json" } : {}),
+      ...(includeThinkingConfig && settings.disableThinking && isGemini25Model(credentials.model)
+        ? { thinkingConfig: { thinkingBudget: 0 } }
+        : {}),
+    },
+  };
+}
+
 export async function generateWithGemini(
   credentials: AiConnectionCredentials,
-  prompt: string
+  prompt: string,
+  options?: AiGenerateOptions,
 ): Promise<string> {
-  const url = `${BASE_URL}/${encodeURIComponent(credentials.model)}:generateContent?key=${encodeURIComponent(
-    credentials.apiKey
-  )}`;
+  const url = `${BASE_URL}/${encodeURIComponent(credentials.model)}:generateContent`;
 
-  let res: Response;
-  try {
-    res = await withTimeout(GENERATE_TIMEOUT_MS, (signal) =>
-      fetch(url, {
-        method: "POST",
-        signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 1800 },
-        }),
-      })
-    );
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      throw new AiServiceError("timeout", "Timed out waiting for Gemini.");
+  async function send(includeThinkingConfig: boolean): Promise<{ res: Response; body: any }> {
+    let res: Response;
+    try {
+      res = await withTimeout(GENERATE_TIMEOUT_MS, (signal) =>
+        fetch(url, {
+          method: "POST",
+          signal,
+          headers: { "Content-Type": "application/json", "x-goog-api-key": credentials.apiKey },
+          body: JSON.stringify(buildGeminiRequestBody(credentials, prompt, options, includeThinkingConfig)),
+        })
+      );
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        throw new AiServiceError("timeout", "Timed out waiting for Gemini.");
+      }
+      throw new AiServiceError("network", "Could not reach Gemini.");
     }
-    throw new AiServiceError("network", "Could not reach Gemini.");
+    return { res, body: await res.json().catch(() => null) };
   }
 
-  const body = await res.json().catch(() => null);
+  let { res, body } = await send(true);
+  // Some 2.5 models (e.g. Pro) cannot switch thinking off and answer 400 about the thinking budget.
+  // Retry once without thinkingConfig instead of failing the request.
+  if (res.status === 400 && /thinking/i.test(String(extractGeminiMessage(body) ?? ""))
+      && buildGeminiRequestBody(credentials, prompt, options).generationConfig.thinkingConfig) {
+    ({ res, body } = await send(false));
+  }
   if (!res.ok) {
     throw translateHttpError(res.status, body);
   }
@@ -139,7 +172,7 @@ export async function validateGeminiConnection(
 ): Promise<{ ok: boolean; message: string }> {
   try {
     const res = await withTimeout(VALIDATE_TIMEOUT_MS, (signal) =>
-      fetch(`${BASE_URL}?key=${encodeURIComponent(apiKey)}`, { signal })
+      fetch(BASE_URL, { signal, headers: { "x-goog-api-key": apiKey } })
     );
 
     if (res.ok) return { ok: true, message: "Connection verified." };

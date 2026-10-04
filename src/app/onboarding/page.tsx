@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +23,7 @@ import { trackLearningEvent } from "@/lib/analytics";
 export default function OnboardingPage() {
   const router = useRouter();
   const { user, completeOnboarding } = useAuth();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const [categories, setCategories] = React.useState<Category[]>([]);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [selectedSubtopics, setSelectedSubtopics] = React.useState<Record<string, string[]>>({});
@@ -69,7 +72,7 @@ export default function OnboardingPage() {
 
   async function resolveOtherSuggestion() {
     const trimmed = otherInput.trim();
-    if (!user || !trimmed) return;
+    if (!user || !trimmed || !languageReady) return;
 
     const validation = validateCustomInterestName(trimmed);
     if (!validation.valid) {
@@ -84,7 +87,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized }),
+        body: JSON.stringify({ otherText: validation.normalized, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || "Unable to suggest a category.");
@@ -107,6 +110,7 @@ export default function OnboardingPage() {
   }
 
   async function addCustomSubtopic(categoryId: string) {
+    if (!languageReady) return;
     const value = customSubtopicInputs[categoryId] ?? "";
     const category = selectedCategories.find((item) => item.id === categoryId);
     const knownSubtopics = category ? getDefaultSubcategoriesForMain(category.name) : [];
@@ -126,7 +130,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user!.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics }),
+        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       const suggestion = String(payload?.suggestion?.cleanedName ?? "").trim();
@@ -262,6 +266,7 @@ export default function OnboardingPage() {
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-accent">Welcome</p>
           <h1 className="font-display text-3xl font-semibold">Choose the topics you want to learn</h1>
           <p className="text-muted-foreground">Pick a few categories so Study Lamp can personalize your dashboard and recommendations.</p>
+          <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || suggestionLoading} />
         </div>
 
         <Card>

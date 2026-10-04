@@ -1,5 +1,6 @@
 import { AiServiceError } from "../errors";
-import type { AiConnectionCredentials } from "../types";
+import type { AiConnectionCredentials, AiGenerateOptions } from "../types";
+import { resolveAiGenerateOptions } from "../generateOptions";
 
 const CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 const MODELS_URL = "https://api.openai.com/v1/models";
@@ -52,9 +53,29 @@ function parseChatCompletion(body: any): string {
   return text.trim();
 }
 
+/** o-series and gpt-5 reasoning models reject a custom `temperature`. */
+export function isOpenAiReasoningModel(model: string): boolean {
+  return /^(o\d|gpt-5)/i.test(model.trim());
+}
+
+/** Request body for OpenAI chat completions. `max_tokens` is deprecated and rejected
+ *  by newer models, so `max_completion_tokens` is used for every model. */
+export function buildOpenAiRequestBody(credentials: AiConnectionCredentials, prompt: string, options?: AiGenerateOptions) {
+  const settings = resolveAiGenerateOptions(options);
+  return {
+    model: credentials.model,
+    messages: [{ role: "user", content: prompt }],
+    max_completion_tokens: settings.maxOutputTokens,
+    ...(isOpenAiReasoningModel(credentials.model) ? {} : { temperature: settings.temperature }),
+    // json_object mode only allows an object root; array replies stay prompt-only.
+    ...(settings.json && settings.jsonRoot === "object" ? { response_format: { type: "json_object" } } : {}),
+  };
+}
+
 export async function generateWithOpenAi(
   credentials: AiConnectionCredentials,
-  prompt: string
+  prompt: string,
+  options?: AiGenerateOptions,
 ): Promise<string> {
   let res: Response;
   try {
@@ -66,12 +87,7 @@ export async function generateWithOpenAi(
           Authorization: `Bearer ${credentials.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: credentials.model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
-          max_tokens: 1800,
-        }),
+        body: JSON.stringify(buildOpenAiRequestBody(credentials, prompt, options)),
       })
     );
   } catch (err: any) {

@@ -11,6 +11,8 @@ import { PlaylistSidebar } from "@/components/video/PlaylistSidebar";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SummaryPane } from "@/components/video/SummaryPane";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 import { TranscriptInput } from "@/components/video/TranscriptInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +50,7 @@ function VideoPageContent() {
   const router = useRouter();
   const playlistId = searchParams.get("playlist") || "";
   const { user } = useAuth();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
 
   const [playlistVideos, setPlaylistVideos] = React.useState<Video[]>([]);
   const [playlistTitle, setPlaylistTitle] = React.useState<string>("Current playlist");
@@ -165,7 +168,7 @@ function VideoPageContent() {
   }
 
   async function handleGenerateSummary() {
-    if (!user || !video || generatingSummary) return;
+    if (!user || !video || generatingSummary || !languageReady) return;
     if (summary.trim() && !confirm("Replace your current summary with an AI-generated starter draft? This can't be undone.")) {
       return;
     }
@@ -173,6 +176,7 @@ function VideoPageContent() {
     try {
       const idToken = await user.getIdToken();
       const draft = await generateStarterSummary(idToken, {
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
       });
@@ -188,11 +192,12 @@ function VideoPageContent() {
   }
 
   async function handleGenerateQuiz() {
-    if (!user || !video || quizLoading) return;
+    if (!user || !video || quizLoading || !languageReady) return;
     setQuizLoading(true);
     try {
       const idToken = await user.getIdToken();
       const response = await generateVideoQuizForCurrentVideo(idToken, {
+        language: languageForRequest,
         youtubeVideoId: video.youtubeVideoId || "",
         manualTranscript: transcript,
         videoId,
@@ -226,22 +231,29 @@ function VideoPageContent() {
 
     try {
       const idToken = await user.getIdToken();
-      await fetch("/api/quiz-attempts", {
+      const response = await fetch("/api/quiz-attempts", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          userId: user.uid,
           videoId: video.id,
-          categoryId: video.categoryId || null,
+          categoryId: video.categoryId || undefined,
+          playlistId,
+          source: "shared",
           score,
           totalQuestions: total,
+          answers: quizQuestions.map((question) => ({
+            questionId: question.id,
+            chosenOptionId: selectedAnswers[question.id] || "",
+            wasCorrect: selectedAnswers[question.id] === question.correctOptionId,
+          })),
         }),
       });
+      if (!response.ok) toast.error("Couldn't save your quiz result");
     } catch {
-      // Intentionally non-blocking: the quiz can still be graded locally.
+      toast.error("Couldn't save your quiz result");
     }
   }
 
@@ -421,7 +433,8 @@ function VideoPageContent() {
               </TabsList>
 
               <TabsContent value="summary">
-                <div className="mb-2 flex justify-end">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || generatingSummary} />
                   <Button
                     variant="outline"
                     size="sm"
@@ -477,8 +490,9 @@ function VideoPageContent() {
               </TabsContent>
 
               <TabsContent value="quiz" className="space-y-4">
-                <div className="flex justify-end">
-                  <Button variant="outline" size="sm" onClick={handleGenerateQuiz} loading={quizLoading} loadingText="Generating…">
+                <div className="flex items-center justify-between gap-3">
+                  <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || quizLoading} />
+                  <Button variant="outline" size="sm" onClick={handleGenerateQuiz} disabled={!languageReady} loading={quizLoading} loadingText="Generating…">
                     {quizQuestions.length ? "Generate a new quiz" : "Generate quiz"}
                   </Button>
                 </div>

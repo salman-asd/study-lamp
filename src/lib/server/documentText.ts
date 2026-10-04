@@ -1,28 +1,23 @@
+import * as XLSX from "xlsx";
+import { posix as path } from "path";
 import { readZipEntries } from "@/lib/server/zipReader";
 import type { DocumentFileType } from "@/types";
 
-// Server-only. Turns a downloaded PDF/Word/PowerPoint/Excel file into plain
-// text good enough to feed the same AI pipeline a video transcript feeds
-// (generateVideoSummary/generateVideoQuiz — see src/lib/ai/aiService.ts).
-//
-// docx/pptx/xlsx are all "OOXML": a zip of XML parts. Rather than add a new
-// npm dependency for each, extraction here reads the zip directly (see
-// zipReader.ts) and regex-pulls text nodes out of the relevant XML parts.
-// This intentionally does not attempt full OOXML fidelity (tables laid out
-// as tables, slide/paragraph structure, etc.) — it's a text-extraction
-// pass for AI grounding, not a document converter.
-//
-// PDF text extraction is a fundamentally harder problem (arbitrary content
-// streams, font encodings) that isn't practical to hand-roll — this uses
-// `pdf-parse`, a small pure-JS dependency added to package.json. If it
-// isn't installed yet (`npm install` needs to be run — see README-drive.md),
-// PDF extraction throws a clear error rather than silently returning junk.
+export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+export const MAX_EXTRACTED_TEXT_CHARS = 200_000;
+const MAX_ROWS_PER_SHEET = 5_000;
 
-const TEXT_NODE_RE_DOCX = /<w:t[^>]*>([^<]*)<\/w:t>/g;
-const TEXT_NODE_RE_PPTX = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+export class ScannedPdfError extends Error {
+  constructor() {
+    super("This looks like a scanned PDF; text extraction needs OCR");
+    this.name = "ScannedPdfError";
+  }
+}
 
 function decodeXmlEntities(text: string): string {
   return text
+    .replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
@@ -30,115 +25,121 @@ function decodeXmlEntities(text: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function extractDocxText(buffer: Buffer): string {
-  const entries = readZipEntries(buffer);
-  const doc = entries.get("word/document.xml");
-  if (!doc) throw new Error("Couldn't find word/document.xml in this .docx file.");
-  const xml = doc.toString("utf8");
-  const paragraphs: string[] = [];
-  // Split on paragraph boundaries so runs stay grouped into readable lines
-  // rather than one giant run-on string.
-  for (const para of xml.split(/<\/w:p>/)) {
-    const runs: string[] = [];
-    let match: RegExpExecArray | null;
-    const re = new RegExp(TEXT_NODE_RE_DOCX);
-    while ((match = re.exec(para))) runs.push(decodeXmlEntities(match[1]));
-    const line = runs.join("").trim();
-    if (line) paragraphs.push(line);
+function xmlAttribute(attributes: string, name: string): string | null {
+  const match = attributes.match(new RegExp(`(?:^|\\s)${name}=["']([^"']*)["']`));
+  return match ? decodeXmlEntities(match[1]) : null;
+}
+
+function parseRelationships(xml: string): Map<string, string> {
+  const relationships = new Map<string, string>();
+  for (const match of xml.matchAll(/<Relationship\b([^>]*)\/?\s*>/g)) {
+    const id = xmlAttribute(match[1], "Id");
+    const target = xmlAttribute(match[1], "Target");
+    const targetMode = xmlAttribute(match[1], "TargetMode");
+    if (id && target && targetMode !== "External") relationships.set(id, target);
   }
-  return paragraphs.join("\n");
+  return relationships;
+}
+
+function resolvePartPath(baseDirectory: string, target: string): string | null {
+  const resolved = target.startsWith("/") ? path.normalize(target.slice(1)) : path.normalize(path.join(baseDirectory, target));
+  return resolved === ".." || resolved.startsWith("../") || path.isAbsolute(resolved) ? null : resolved;
+}
+
+function extractXmlParagraphs(xml: string, omitSlideNumberPlaceholders = false): string[] {
+  const paragraphs: string[] = [];
+  for (const match of xml.matchAll(/<a:p\b[^>]*>[\s\S]*?<\/a:p>/g)) {
+    const paragraph = match[0];
+    if (omitSlideNumberPlaceholders && /<p:ph\b[^>]*\btype=["']sldNum["']/.test(paragraph)) continue;
+    const runs = [...paragraph.matchAll(/<a:t\b[^>]*>([\s\S]*?)<\/a:t>/g)].map((run) => decodeXmlEntities(run[1]));
+    const text = runs.join("").trim();
+    if (text) paragraphs.push(text);
+  }
+  return paragraphs;
+}
+
+async function extractDocxText(buffer: Buffer): Promise<string> {
+  readZipEntries(buffer);
+  const mammoth = await import("mammoth");
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value.trim();
 }
 
 function extractPptxText(buffer: Buffer): string {
   const entries = readZipEntries(buffer);
-  const slideNames = [...entries.keys()]
-    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-    .sort((a, b) => {
-      const na = Number(a.match(/slide(\d+)\.xml/)?.[1] ?? 0);
-      const nb = Number(b.match(/slide(\d+)\.xml/)?.[1] ?? 0);
-      return na - nb;
-    });
-  if (slideNames.length === 0) throw new Error("Couldn't find any slides in this .pptx file.");
+  const presentation = entries.get("ppt/presentation.xml")?.toString("utf8");
+  const presentationRelationships = entries.get("ppt/_rels/presentation.xml.rels")?.toString("utf8");
+  if (!presentation || !presentationRelationships) throw new Error("Couldn't find the presentation order in this .pptx file.");
 
-  const slides: string[] = [];
-  slideNames.forEach((name, i) => {
-    const xml = entries.get(name)!.toString("utf8");
-    const runs: string[] = [];
-    let match: RegExpExecArray | null;
-    const re = new RegExp(TEXT_NODE_RE_PPTX);
-    while ((match = re.exec(xml))) runs.push(decodeXmlEntities(match[1]));
-    const text = runs.join(" ").trim();
-    if (text) slides.push(`Slide ${i + 1}: ${text}`);
+  const relationships = parseRelationships(presentationRelationships);
+  const slideOrder = [...presentation.matchAll(/<p:sldId\b([^>]*)\/?\s*>/g)]
+    .map((match) => xmlAttribute(match[1], "r:id"))
+    .map((id) => id ? resolvePartPath("ppt", relationships.get(id) || "") : null)
+    .filter((name): name is string => Boolean(name && entries.has(name)));
+  if (slideOrder.length === 0) throw new Error("Couldn't find any slides in this .pptx file.");
+
+  const output: string[] = [];
+  slideOrder.forEach((slideName, index) => {
+    const slideXml = entries.get(slideName)!.toString("utf8");
+    const slideText = extractXmlParagraphs(slideXml).join(" ");
+    if (slideText) output.push(`Slide ${index + 1}: ${slideText}`);
+
+    const slideRelsPath = path.join(path.dirname(slideName), "_rels", `${path.basename(slideName)}.rels`);
+    const slideRels = entries.get(slideRelsPath)?.toString("utf8");
+    if (!slideRels) return;
+    const notesTarget = [...parseRelationships(slideRels).values()].find((target) => /\/notesSlide$/.test(target) || /notesSlide\d*\.xml$/.test(target));
+    if (!notesTarget) return;
+    const notesName = resolvePartPath(path.dirname(slideName), notesTarget);
+    const notesXml = notesName ? entries.get(notesName)?.toString("utf8") : undefined;
+    if (!notesXml) return;
+    const notes = extractXmlParagraphs(notesXml, true).join(" ");
+    if (notes) output.push(`Notes ${index + 1}: ${notes}`);
   });
-  return slides.join("\n\n");
+
+  return output.join("\n\n");
 }
 
 function extractXlsxText(buffer: Buffer): string {
-  const entries = readZipEntries(buffer);
+  readZipEntries(buffer);
+  // sheetRows stops parsing each sheet after the cap (+1 so a truncated sheet is detectable) instead of reading the whole workbook first.
+  const workbook = XLSX.read(buffer, { type: "buffer", cellText: true, cellDates: false, sheetRows: MAX_ROWS_PER_SHEET + 1 });
+  if (workbook.SheetNames.length === 0) throw new Error("Couldn't find any worksheets in this .xlsx file.");
 
-  // Shared strings table — most cell text in a real workbook is stored here
-  // and referenced by index from the sheet XML, rather than inline.
-  const sharedStrings: string[] = [];
-  const sst = entries.get("xl/sharedStrings.xml");
-  if (sst) {
-    const xml = sst.toString("utf8");
-    for (const si of xml.split(/<\/si>/)) {
-      const runs: string[] = [];
-      let match: RegExpExecArray | null;
-      const re = /<t[^>]*>([^<]*)<\/t>/g;
-      while ((match = re.exec(si))) runs.push(decodeXmlEntities(match[1]));
-      sharedStrings.push(runs.join(""));
-    }
-  }
-
-  const sheetNames = [...entries.keys()].filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name));
-  if (sheetNames.length === 0) throw new Error("Couldn't find any worksheets in this .xlsx file.");
-
-  const rowsOut: string[] = [];
-  for (const name of sheetNames) {
-    const xml = entries.get(name)!.toString("utf8");
-    for (const row of xml.split(/<\/row>/)) {
-      const cells: string[] = [];
-      const cellRe = /<c[^>]*?(?:\st="([^"]*)")?[^>]*>(?:<v>([^<]*)<\/v>)?<\/c>/g;
-      let m: RegExpExecArray | null;
-      while ((m = cellRe.exec(row))) {
-        const type = m[1];
-        const raw = m[2];
-        if (raw === undefined) continue;
-        cells.push(type === "s" ? sharedStrings[Number(raw)] ?? "" : raw);
-      }
-      const line = cells.filter(Boolean).join("\t").trim();
-      if (line) rowsOut.push(line);
-    }
-  }
-  return rowsOut.join("\n");
+  return workbook.SheetNames.map((name) => {
+    const sheet = workbook.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, blankrows: false })
+      .slice(0, MAX_ROWS_PER_SHEET);
+    const lines = rows.map((row) => row.map((cell) => String(cell ?? "")).join("\t"));
+    return [`Sheet: ${name}`, ...lines].join("\n");
+  }).join("\n\n");
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
-  let pdfParse: any;
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
   try {
-    // Dynamic import so a deployment that hasn't run `npm install` yet
-    // (this dependency was added but couldn't be installed in the sandbox
-    // this feature was built in — see README-drive.md) fails with a clear
-    // message here instead of at build/boot time.
-    const mod: any = await import("pdf-parse");
-    pdfParse = typeof mod === "function" ? mod : mod.default;
-  } catch {
-    throw new Error("PDF text extraction needs the 'pdf-parse' package. Run `npm install` (see README-drive.md), then try again.");
+    const result = await extractText(pdf, { mergePages: true });
+    const text = result.text.trim();
+    if (!text) throw new ScannedPdfError();
+    return text;
+  } finally {
+    await (pdf as typeof pdf & { destroy?: () => Promise<void> }).destroy?.();
   }
-  const result = await pdfParse(buffer);
-  return String(result.text || "").trim();
 }
 
 export async function extractDocumentText(buffer: Buffer, fileType: DocumentFileType): Promise<string> {
+  if (buffer.length > MAX_DOCUMENT_BYTES) throw new Error("This document is larger than the 50 MB extraction limit.");
+
+  let text: string;
   switch (fileType) {
-    case "docx": return extractDocxText(buffer);
-    case "pptx": return extractPptxText(buffer);
-    case "xlsx": return extractXlsxText(buffer);
-    case "pdf": return extractPdfText(buffer);
+    case "docx": text = await extractDocxText(buffer); break;
+    case "pptx": text = extractPptxText(buffer); break;
+    case "xlsx": text = extractXlsxText(buffer); break;
+    case "pdf": text = await extractPdfText(buffer); break;
     default: {
       const _exhaustive: never = fileType;
       throw new Error(`Unsupported document type: ${_exhaustive}`);
     }
   }
+  return text.slice(0, MAX_EXTRACTED_TEXT_CHARS).trim();
 }

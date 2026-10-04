@@ -4,7 +4,7 @@ import admin from "firebase-admin";
 export interface AiQuota {
   dailyLimit: number;
   usedToday: number;
-  date: string; // YYYY-MM-DD in the user's local timezone; server-side dates are UTC-safe for counters.
+  date: string; // YYYY-MM-DD in QUOTA_TIMEZONE.
   systemAiEnabled: boolean;
 }
 
@@ -18,6 +18,10 @@ export interface SetUserQuotaOverrideInput {
 }
 
 const DEFAULT_DAILY_LIMIT = 5;
+
+export function getQuotaDate(now: Date = new Date(), timeZone = process.env.QUOTA_TIMEZONE || "Asia/Dhaka"): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(now);
+}
 
 export function validateQuotaOverrideInput(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return "Request body must be a JSON object.";
@@ -49,7 +53,7 @@ export function validateSystemDefaultsInput(body: unknown): string | null {
 
 export function buildDefaultQuota(defaults?: Partial<SystemAiDefaults>): AiQuota {
   const dailyLimit = Number.isFinite(defaults?.defaultDailyLimit) ? Number(defaults!.defaultDailyLimit) : DEFAULT_DAILY_LIMIT;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getQuotaDate();
   return {
     dailyLimit: Math.max(0, dailyLimit),
     usedToday: 0,
@@ -103,7 +107,7 @@ export async function getOrInitQuota(uid: string): Promise<AiQuota> {
     const next = {
       dailyLimit: Number.isFinite(existing?.dailyLimit) ? Number(existing!.dailyLimit) : DEFAULT_DAILY_LIMIT,
       usedToday: Number.isFinite(existing?.usedToday) ? Number(existing!.usedToday) : 0,
-      date: typeof existing?.date === "string" ? existing.date : new Date().toISOString().slice(0, 10),
+      date: typeof existing?.date === "string" ? existing.date : getQuotaDate(),
       systemAiEnabled: existing?.systemAiEnabled !== false,
     } satisfies AiQuota;
     return next;
@@ -116,7 +120,7 @@ export async function getOrInitQuota(uid: string): Promise<AiQuota> {
 }
 
 export async function consumeQuota(uid: string): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getQuotaDate();
   const ref = quotaRef(uid);
 
   let allowed = false;

@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
+import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +20,7 @@ import { GuideCard, GuideList, GuideSection } from "@/components/shared/GuideCar
 import { toast } from "sonner";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAiLanguage } from "@/hooks/useAiLanguage";
 
 export default function InterestsSettingsPage() {
   return (
@@ -30,6 +32,7 @@ export default function InterestsSettingsPage() {
 
 function InterestsContent() {
   const { user } = useAuth();
+  const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const [loading, setLoading] = React.useState(true);
   const [interestCategories, setInterestCategories] = React.useState<Category[]>([]);
   const [selectedInterestIds, setSelectedInterestIds] = React.useState<string[]>([]);
@@ -121,6 +124,7 @@ function InterestsContent() {
   }
 
   async function addCustomSubtopic(categoryId: string) {
+    if (!languageReady) return;
     const category = selectedCategories.find((item) => item.id === categoryId);
     const value = customSubtopicInputs[categoryId] ?? "";
     const knownSubtopics = category ? getDefaultSubcategoriesForMain(category.name) : [];
@@ -140,7 +144,7 @@ function InterestsContent() {
       const response = await fetch("/api/ai/suggest-category-name", {
         method: "POST",
         headers: { Authorization: `Bearer ${await user!.getIdToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics }),
+        body: JSON.stringify({ otherText: validation.normalized, contextName: category?.name, candidateSubtopics: knownSubtopics, language: languageForRequest }),
       });
       const payload = await response.json().catch(() => ({}));
       const suggestion = String(payload?.suggestion?.cleanedName ?? "").trim();
@@ -215,6 +219,7 @@ function InterestsContent() {
               <div>
                 <h2 className="font-display text-base font-semibold">Learning interests</h2>
                 <p className="text-sm text-muted-foreground">These power your roadmap and recommendations.</p>
+                <AiLanguagePicker value={language} onChange={setLanguage} disabled={!languageReady || savingCustomInterest} />
               </div>
               <Link href="/onboarding" className="text-sm font-medium text-accent hover:underline">Review onboarding</Link>
             </div>
