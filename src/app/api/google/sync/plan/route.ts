@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { getGoogleCalendarConnection, getAccessTokenForConnection } from "@/lib/server/googleConnections";
 import { buildGoalSyncPlan } from "@/lib/server/goalSyncPlan";
