@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { getFileMetadata, documentFileTypeFromMime, SUPPORTED_VIDEO_MIME_PREFIX, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { addDriveVideoAdmin, addDriveDocumentAdmin, getOrCreateUnsortedPlaylistAdmin } from "@/lib/server/driveImport";
 import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
@@ -51,6 +52,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
 
     const fileType = documentFileTypeFromMime(meta.mimeType);
     if (fileType) {
+      const googleNative = meta.mimeType === "application/vnd.google-apps.document" || meta.mimeType === "application/vnd.google-apps.spreadsheet";
       await fetchAndSaveDriveThumbnails(uid, connectionId, [{ fileId: meta.id, thumbnailLink: meta.thumbnailLink }], (operation) => (
         withDriveAccessToken(uid, connectionId, operation)
       ));
@@ -58,11 +60,12 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
         title: meta.name,
         fileType,
         mimeType: meta.mimeType,
-        sizeBytes: meta.size ? Number(meta.size) : null,
+        sizeBytes: googleNative ? null : (meta.size ? Number(meta.size) : null),
         driveFileId: meta.id,
         driveConnectionId: connectionId,
-        md5Checksum: meta.md5Checksum ?? null,
+        md5Checksum: googleNative ? null : (meta.md5Checksum ?? null),
         modifiedTime: meta.modifiedTime ?? null,
+        googleNative,
         thumbnailUrl: driveThumbnailMarker(meta.id, connectionId),
         thumbnailAttempted: true,
       });
@@ -77,7 +80,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof Error && err.message.startsWith("Drive can't access that file.")) {
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
-    console.error("Drive file import failed", err);
+    logServerError("Drive file import failed", err);
     return NextResponse.json({ error: "Couldn't import that file from Drive." }, { status: 502 });
   }
 }, { scope: "drive:import-file", preset: "import" });

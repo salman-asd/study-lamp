@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { fetchModelsForProvider } from "@/lib/server/aiModels";
+import { logServerError } from "@/lib/server/logError";
 
 import type { AiProvider } from "@/types";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -35,7 +36,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    console.error("Fetch AI models error:", error instanceof Error ? error.name : "unknown");
+    logServerError("Fetch AI models error:", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Unable to fetch AI models." }, { status: 500 });
   }
 });

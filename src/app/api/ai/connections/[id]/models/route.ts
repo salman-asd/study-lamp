@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getConnectionRaw } from "@/lib/server/aiConnections";
+import { logServerError } from "@/lib/server/logError";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { fetchModelsForProvider } from "@/lib/server/aiModels";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -35,7 +36,7 @@ export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, pa
     try {
       apiKey = decryptApiKey(connection.encryptedApiKey);
     } catch (err) {
-      console.error("Failed to decrypt AI connection for model refresh", err);
+      logServerError("Failed to decrypt AI connection for model refresh", err);
       return NextResponse.json(
         { error: "Could not read this connection's stored key. Try re-adding it." },
         { status: 500 }

@@ -108,7 +108,8 @@ service cloud.firestore {
 
     function sameDriveReferences() {
       return request.resource.data.get('driveFileId', null) == resource.data.get('driveFileId', null) &&
-        request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null);
+        request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null) &&
+        request.resource.data.get('googleNative', null) == resource.data.get('googleNative', null);
     }
 
     // Field validation shared by create and update of a personal video
@@ -146,6 +147,7 @@ service cloud.firestore {
         optionalString(data, 'driveConnectionId', 200) &&
         optionalString(data, 'md5Checksum', 100) &&
         optionalString(data, 'modifiedTime', 100) &&
+        optionalBool(data, 'googleNative') &&
         optionalString(data, 'categoryId', 200) &&
         optionalString(data, 'thumbnailUrl', 500) &&
         // sizeBytes is written as null when Drive does not report a size.
@@ -397,6 +399,20 @@ service cloud.firestore {
       // access goes through /api/drive/* routes using the Admin SDK. See
       // src/lib/server/driveConnections.ts.
       match /driveConnections/{connectionId} {
+        allow read, write: if false;
+      }
+
+      // Google Workspace OAuth connections (encrypted refresh tokens for the
+      // narrower Calendar/Tasks scopes). Denied to the client SDK entirely;
+      // all access goes through /api/google/* routes using the Admin SDK. See
+      // src/lib/server/googleConnections.ts.
+      match /googleConnections/{connectionId} {
+        allow read, write: if false;
+      }
+
+      // Step W3 will store goal↔event mapping docs here. Denied up front so the
+      // mapping can never be read or written by the client SDK.
+      match /googleSync/{mappingId} {
         allow read, write: if false;
       }
 

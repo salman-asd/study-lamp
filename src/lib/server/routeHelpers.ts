@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { requireAdminUid, requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { checkRateLimit, type RateLimitPreset } from "@/lib/server/rateLimit";
+import { logServerError } from "@/lib/server/logError";
 
 /** HTTP status per AiServiceError code. The single copy; routes must not keep their own. */
 export const AI_STATUS_BY_CODE: Record<AiErrorCode, number> = {
@@ -27,6 +28,8 @@ export interface AuthedRouteOptions {
   scope?: string;
   preset?: RateLimitPreset;
   limit?: number;
+  /** Require the caller to be an admin. */
+  admin?: boolean;
   /** Body text of the 429 response. Default "Too many requests." */
   tooManyMessage?: string;
   /** Retry-After header on the 429 response, in seconds. Default 60; null sends no header. */
@@ -57,8 +60,13 @@ export function createAuthedRoute<P = Record<string, never>>(
     const uid = await authenticate(req);
     if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const effectiveUid = options.admin ? await requireAdminUid(req) : uid;
+    if (options.admin && !effectiveUid) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     if (options.scope) {
-      const allowed = checkRateLimit(uid, { scope: options.scope, preset: options.preset, limit: options.limit });
+      const allowed = checkRateLimit(effectiveUid ?? uid, { scope: options.scope, preset: options.preset, limit: options.limit });
       if (!allowed) {
         const retryAfter = options.retryAfterSeconds === undefined ? 60 : options.retryAfterSeconds;
         return NextResponse.json(
@@ -68,7 +76,7 @@ export function createAuthedRoute<P = Record<string, never>>(
       }
     }
 
-    return handler({ uid, req, params: context?.params ?? ({} as P) });
+    return handler({ uid: effectiveUid ?? uid, req, params: context?.params ?? ({} as P) });
   };
 }
 
@@ -104,6 +112,6 @@ export function aiErrorResponse(err: unknown, options: AiErrorResponseOptions): 
     return NextResponse.json({ error: message }, { status });
   }
   const name = err instanceof Error ? err.name : typeof err;
-  console.error(`${options.logLabel ?? "Unexpected AI route error"}: ${name}`);
+  logServerError(options.logLabel ?? "Unexpected AI route error", err);
   return NextResponse.json({ error: options.fallbackMessage }, { status: 500 });
 }

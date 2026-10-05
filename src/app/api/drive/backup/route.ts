@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { getOrCreateBackupFolder, isValidDriveConnectionId, uploadJsonFile } from "@/lib/server/googleDrive";
 import { buildBackupPayload } from "@/lib/server/driveBackup";
 import { withAuthedRoute, readJsonObject } from "@/lib/server/routeHelpers";
@@ -40,7 +41,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Drive backup failed", err);
+    logServerError("Drive backup failed", err);
     return NextResponse.json({ error: "Couldn't back up to Drive." }, { status: 502 });
   }
 }, { scope: "drive:backup" });

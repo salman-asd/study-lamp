@@ -33,6 +33,9 @@ Set these in Vercel (Production and Preview). `NEXT_PUBLIC_*` values are embedde
 | `GOOGLE_DRIVE_CLIENT_ID` | server | yes for Drive |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | server | yes for Drive |
 | `GOOGLE_DRIVE_OAUTH_STATE_SECRET` | server | yes for Drive |
+| `GOOGLE_WORKSPACE_CLIENT_ID` | server | yes for Calendar/Tasks |
+| `GOOGLE_WORKSPACE_CLIENT_SECRET` | server | yes for Calendar/Tasks |
+| `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET` | server | yes for Calendar/Tasks |
 | `DRIVE_URL_SIGNING_SECRET` | server | yes for Drive playback |
 | `YOUTUBE_API_KEY` | server | optional |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | server | optional |

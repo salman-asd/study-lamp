@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import {
   isSupportedUploadMimeType,
   isValidDriveConnectionId,
@@ -46,7 +47,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Failed to start Drive upload session", err);
+    logServerError("Failed to start Drive upload session", err);
     return NextResponse.json({ error: "Couldn't start the upload to Drive." }, { status: 502 });
   }
 }, { scope: "drive:upload-session", limit: 10 });

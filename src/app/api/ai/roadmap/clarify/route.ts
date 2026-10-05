@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { logServerError } from "@/lib/server/logError";
 import { AiServiceError, generateTopicClarification, generateFocusClarification } from "@/lib/ai/aiService";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -29,7 +30,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
     // Clarification is best-effort — never block saving over it.
-    if (err instanceof AiServiceError) console.error(`Clarify AI error [${err.code}]`);
+    if (err instanceof AiServiceError) if (err instanceof AiServiceError) logServerError(`Clarify AI error [${err.code}]`, err);
     return NextResponse.json({ ambiguous: false });
   }
 });

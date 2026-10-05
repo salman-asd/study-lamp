@@ -226,6 +226,7 @@ export interface DriveDocumentInput {
   driveConnectionId: string;
   md5Checksum?: string | null;
   modifiedTime?: string | null;
+  googleNative?: boolean;
   /** Marker for the server-side thumbnail (see driveThumbnailMarker). */
   thumbnailUrl?: string | null;
   thumbnailAttempted?: boolean;
@@ -242,11 +243,12 @@ export async function addDriveDocumentAdmin(ownerId: string, doc: DriveDocumentI
     title: doc.title,
     fileType: doc.fileType,
     mimeType: doc.mimeType,
-    sizeBytes: doc.sizeBytes ?? null,
+    sizeBytes: doc.googleNative ? null : (doc.sizeBytes ?? null),
     driveFileId: doc.driveFileId,
     driveConnectionId: doc.driveConnectionId,
-    md5Checksum: doc.md5Checksum ?? null,
+    md5Checksum: doc.googleNative ? null : (doc.md5Checksum ?? null),
     modifiedTime: doc.modifiedTime ?? null,
+    googleNative: Boolean(doc.googleNative),
     thumbnailUrl: doc.thumbnailUrl ?? null,
     thumbnailAttemptedAt: doc.thumbnailAttempted ? admin.firestore.FieldValue.serverTimestamp() : null,
     categoryId: null,
@@ -277,11 +279,12 @@ export async function bulkAddDriveDocumentsWithStats(ownerId: string, documents:
     title: document.title,
     fileType: document.fileType,
     mimeType: document.mimeType,
-    sizeBytes: document.sizeBytes ?? null,
+    sizeBytes: document.googleNative ? null : (document.sizeBytes ?? null),
     driveFileId: document.driveFileId,
     driveConnectionId: document.driveConnectionId,
-    md5Checksum: document.md5Checksum ?? null,
+    md5Checksum: document.googleNative ? null : (document.md5Checksum ?? null),
     modifiedTime: document.modifiedTime ?? null,
+    googleNative: Boolean(document.googleNative),
     thumbnailUrl: document.thumbnailUrl ?? null,
     thumbnailAttemptedAt: document.thumbnailAttempted ? now : null,
     categoryId: null,

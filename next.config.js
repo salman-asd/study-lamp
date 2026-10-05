@@ -70,14 +70,13 @@ const cspHeaderName = enforceCsp ? "Content-Security-Policy" : "Content-Security
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    // Thumbnails are always external URLs (YouTube, etc). No image uploads/storage.
+    // Keep this allowlist narrow to the specific thumbnail hosts the app actually uses.
     remotePatterns: [
-      { protocol: 'https', hostname: 'i.ytimg.com' },
-      { protocol: 'https', hostname: 'img.youtube.com' },
-      { protocol: 'https', hostname: '**.fbcdn.net' },
-      { protocol: 'https', hostname: 'platform-lookaside.fbsbx.com' },
-      { protocol: 'https', hostname: '**' } // allow any external thumbnail host
-    ]
+      { protocol: "https", hostname: "i.ytimg.com" },
+      { protocol: "https", hostname: "img.youtube.com" },
+      { protocol: "https", hostname: "*.fbcdn.net" },
+      { protocol: "https", hostname: "platform-lookaside.fbsbx.com" },
+    ],
   },
   async headers() {
     return [
@@ -105,7 +104,8 @@ const nextConfig = {
       },
     ];
   },
-  // Netlify's Next.js runtime handles SSR/ISR; no special output target needed.
+  // This app runs on the standard Next.js server runtime for its hosting platform, so no
+  // special output target or platform-specific override is required here.
 };
 
 module.exports = nextConfig;

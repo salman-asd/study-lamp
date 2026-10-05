@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAccessTokenForConnection, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
@@ -23,7 +24,7 @@ export const GET = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Failed to mint Drive access token", err);
+    logServerError("Failed to mint Drive access token", err);
     return NextResponse.json({ error: "Couldn't reach Google Drive." }, { status: 502 });
   }
 }, { scope: "drive:access-token" });

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyDriveState, exchangeCodeForTokens, getGoogleAccountEmail } from "@/lib/server/googleDrive";
+import { logServerError } from "@/lib/server/logError";
 import { upsertDriveConnection } from "@/lib/server/driveConnections";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
     settingsUrl.searchParams.set("connected", googleEmail);
     return redirectAndClearNonce(settingsUrl);
   } catch (err) {
-    console.error("Drive OAuth callback failed", err);
+    logServerError("Drive OAuth callback failed", err);
     settingsUrl.searchParams.set("error", "Something went wrong connecting Google Drive. Please try again.");
     return redirectAndClearNonce(settingsUrl);
   }

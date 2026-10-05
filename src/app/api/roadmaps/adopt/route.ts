@@ -1,14 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { logServerError } from "@/lib/server/logError";
 import { adoptRoadmapTemplateAdmin, getRoadmapTemplateAdmin, listLearningRoadmapsAdmin } from "@/lib/server/roadmapsAdmin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import type { RoadmapLevel } from "@/types";
 import { normalizeUserInterests } from "@/lib/userInterests";
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: any;
   try {
     body = await req.json();
@@ -43,8 +41,8 @@ export async function POST(req: NextRequest) {
     await adminDb.collection("users").doc(uid).set({ interests: nextInterests }, { merge: true });
 
     return NextResponse.json({ roadmapId, adopted: !current });
-  } catch (err: any) {
-    console.error("Failed to adopt roadmap", err);
+  } catch (err: unknown) {
+    logServerError("Failed to adopt roadmap", err);
     return NextResponse.json({ error: "Unable to adopt this roadmap." }, { status: 500 });
   }
-}
+});

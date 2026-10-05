@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { getOrCreateBackupFolder, listBackupFiles } from "@/lib/server/googleDrive";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -21,7 +22,7 @@ export const GET = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Listing Drive backups failed", err);
+    logServerError("Listing Drive backups failed", err);
     return NextResponse.json({ error: "Couldn't list backups from Drive." }, { status: 502 });
   }
 }, { scope: "drive:backup-list" });

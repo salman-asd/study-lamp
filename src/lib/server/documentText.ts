@@ -106,12 +106,28 @@ function extractXlsxText(buffer: Buffer): string {
   if (workbook.SheetNames.length === 0) throw new Error("Couldn't find any worksheets in this .xlsx file.");
 
   return workbook.SheetNames.map((name) => {
+    if (name === "Study Lamp log") return null;
     const sheet = workbook.Sheets[name];
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, blankrows: false })
       .slice(0, MAX_ROWS_PER_SHEET);
     const lines = rows.map((row) => row.map((cell) => String(cell ?? "")).join("\t"));
     return [`Sheet: ${name}`, ...lines].join("\n");
-  }).join("\n\n");
+  }).filter((value): value is string => Boolean(value)).join("\n\n");
+}
+
+export function stripStudyLampDocText(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const studyLampHeadingIndex = lines.findIndex((line) => /^Study Lamp\s*—\s*/i.test(line.trim()));
+  if (studyLampHeadingIndex < 0) return value.trim();
+  return lines.slice(0, studyLampHeadingIndex).join("\n").trim();
+}
+
+export function stripStudyLampSheetNames(value: string): string {
+  return value
+    .split(/\n\n/)
+    .filter((section) => !section.startsWith("Sheet: Study Lamp log"))
+    .join("\n\n")
+    .trim();
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
@@ -132,9 +148,9 @@ export async function extractDocumentText(buffer: Buffer, fileType: DocumentFile
 
   let text: string;
   switch (fileType) {
-    case "docx": text = await extractDocxText(buffer); break;
+    case "docx": text = stripStudyLampDocText(await extractDocxText(buffer)); break;
     case "pptx": text = extractPptxText(buffer); break;
-    case "xlsx": text = extractXlsxText(buffer); break;
+    case "xlsx": text = stripStudyLampSheetNames(extractXlsxText(buffer)); break;
     case "pdf": text = await extractPdfText(buffer); break;
     default: {
       const _exhaustive: never = fileType;

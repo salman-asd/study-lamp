@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminUid } from "@/lib/server/requireAuth";
+import { logServerError } from "@/lib/server/logError";
 import {
   deleteConnection,
   updateConnection,
@@ -35,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
     return NextResponse.json({ connection }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    console.error("Failed to update system AI connection", err);
+    logServerError("Failed to update system AI connection", err);
     return NextResponse.json({ error: "Failed to update connection." }, { status: 500 });
   }
 }
@@ -53,7 +54,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     }
     return NextResponse.json({ success: true }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    console.error("Failed to delete system AI connection", err);
+    logServerError("Failed to delete system AI connection", err);
     return NextResponse.json({ error: "Failed to delete connection." }, { status: 500 });
   }
 }

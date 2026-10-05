@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessTokenForConnection, withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { getFileMetadata } from "@/lib/server/googleDrive";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 import { createDriveTiming, type DriveTiming } from "@/lib/server/timing";
@@ -74,7 +75,7 @@ async function getThumbnailResponse(req: NextRequest, params: RouteParams["param
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Drive thumbnail proxy failed", err);
+    logServerError("Drive thumbnail proxy failed", err);
     return NextResponse.json({ error: "Couldn't reach Google Drive." }, { status: 502 });
   }
 }

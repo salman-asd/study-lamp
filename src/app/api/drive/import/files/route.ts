@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { getFileMetadata, isValidDriveConnectionId, isValidDriveId, type DriveFileMeta } from "@/lib/server/googleDrive";
 import {
   bulkAddDriveDocumentsWithStats,
@@ -144,15 +145,16 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
 
     let addedDocuments = 0;
     if (freshDocuments.length > 0) {
-      const result = await bulkAddDriveDocumentsWithStats(uid, freshDocuments.map(({ file, fileType }) => ({
+      const result = await bulkAddDriveDocumentsWithStats(uid, freshDocuments.map(({ file, fileType, googleNative }) => ({
         title: file.name,
         fileType,
         mimeType: file.mimeType,
-        sizeBytes: file.size ? Number(file.size) : null,
+        sizeBytes: googleNative ? null : (file.size ? Number(file.size) : null),
         driveFileId: file.id,
         driveConnectionId: connectionId,
-        md5Checksum: file.md5Checksum ?? null,
+        md5Checksum: googleNative ? null : (file.md5Checksum ?? null),
         modifiedTime: file.modifiedTime ?? null,
+        googleNative,
         thumbnailUrl: driveThumbnailMarker(file.id, connectionId),
         thumbnailAttempted: true,
       })));
@@ -165,7 +167,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (error instanceof DriveConnectionError) {
       return NextResponse.json({ error: error.message }, { status: error.code === "not_found" ? 404 : 409 });
     }
-    console.error("Drive bulk import failed", error instanceof Error ? error.name : "unknown");
+    logServerError("Drive bulk import failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Couldn't import those files from Drive." }, { status: 502 });
   }
 }, { scope: "drive:import-files", preset: "import" });

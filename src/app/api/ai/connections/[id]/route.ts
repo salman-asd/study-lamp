@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteConnection, updateConnection, validateUpdateInput } from "@/lib/server/aiConnections";
+import { logServerError } from "@/lib/server/logError";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
@@ -33,7 +34,7 @@ export const PATCH = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, p
     }
     return NextResponse.json({ connection }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    console.error("Failed to update AI connection", err);
+    logServerError("Failed to update AI connection", err);
     return NextResponse.json({ error: "Failed to update connection." }, { status: 500 });
   }
 });
@@ -47,7 +48,7 @@ export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, param
     }
     return NextResponse.json({ success: true }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    console.error("Failed to delete AI connection", err);
+    logServerError("Failed to delete AI connection", err);
     return NextResponse.json({ error: "Failed to delete connection." }, { status: 500 });
   }
 });

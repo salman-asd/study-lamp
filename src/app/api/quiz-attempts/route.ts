@@ -1,6 +1,7 @@
 import admin from "firebase-admin";
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
+import { logServerError } from "@/lib/server/logError";
 import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { validateQuizAttemptInput } from "@/lib/quizAttempt";
 
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ id: ref.id }, { status: 201 });
   } catch (error) {
-    console.error("Failed to save quiz attempt", error);
+    logServerError("Failed to save quiz attempt", error);
     return NextResponse.json({ error: "Failed to save quiz attempt." }, { status: 500 });
   }
 }

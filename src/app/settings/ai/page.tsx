@@ -18,7 +18,7 @@ import {
 } from "@/lib/aiConnectionsClient";
 import { getAiPreferences, getAiQuota, updateAiPreferences, type AiPreferences, type AiQuotaSummary } from "@/lib/aiPreferencesClient";
 import type { AiConnectionSummary } from "@/types";
-import { Plus, Pencil, Trash2, Sparkles, GripVertical } from "lucide-react";
+import { Plus, Pencil, Trash2, Sparkles, GripVertical, CalendarRange } from "lucide-react";
 import { TourChip } from "@/components/tour/TourChip";
 import { PageInfo } from "@/components/shared/PageInfo";
 import { GuideCard, GuideList, GuideSection } from "@/components/shared/GuideCard";
@@ -400,6 +400,24 @@ function AiConnectionsContent() {
                 <span className="font-medium">{aiQuota.usedToday} / {aiQuota.dailyLimit}</span>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div className="flex items-start gap-2.5">
+              <CalendarRange className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+              <div>
+                <h2 className="font-display text-base font-semibold">Google Workspace</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Connect Google Calendar and Tasks so Study Lamp can keep your study goals in step. It reads to check
+                  for changes and writes only after you confirm.
+                </p>
+              </div>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <a href="/settings/google">Open Google Workspace</a>
+            </Button>
           </CardContent>
         </Card>
 

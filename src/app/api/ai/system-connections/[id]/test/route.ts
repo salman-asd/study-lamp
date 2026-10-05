@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminUid } from "@/lib/server/requireAuth";
+import { logServerError } from "@/lib/server/logError";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { getConnectionRaw, recordTestResult } from "@/lib/server/systemAiConnections";
 import { validateGeminiConnection } from "@/lib/ai/providers/gemini";
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     apiKey = decryptApiKey(connection.encryptedApiKey);
   } catch (err) {
-    console.error("Failed to decrypt system AI connection for test", err);
+    logServerError("Failed to decrypt system AI connection for test", err);
     return NextResponse.json(
       { error: "Could not read this connection's stored key. Try re-adding it." },
       { status: 500 }

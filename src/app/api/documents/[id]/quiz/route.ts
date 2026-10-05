@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateVideoQuiz } from "@/lib/ai/aiService";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { logServerError } from "@/lib/server/logError";
 import { buildSourceHash } from "@/lib/server/sourceHash";
 import { getDocumentQuiz, saveDocumentQuiz } from "@/lib/server/quiz";
 import { getPersonalDocument, extractPersonalDocumentText } from "@/lib/server/documentContent";
@@ -47,7 +48,7 @@ export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, pa
     try {
       await saveDocumentQuiz(uid, doc.id, questions, sourceHash);
     } catch (cacheError) {
-      console.error("Generated document quiz could not be cached", cacheError);
+      logServerError("Generated document quiz could not be cached", cacheError);
     }
 
     return NextResponse.json({ questions }, { headers: { "Cache-Control": "private, no-store" } });
