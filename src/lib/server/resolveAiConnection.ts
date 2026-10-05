@@ -3,6 +3,7 @@ import {
   recordConnectionFailure as recordPersonalConnectionFailure,
   recordTestResult as recordPersonalTestResult,
 } from "@/lib/server/aiConnections";
+import { logServerError } from "@/lib/server/logError";
 import {
   getActiveConnectionRaw as getSystemConnectionRaw,
   recordConnectionFailure as recordSystemConnectionFailure,
@@ -63,7 +64,7 @@ export async function withAiConnection<T>(
     try {
       personalConnection = await resolved.getPersonalConnectionRaw!(uid, undefined, personalTried);
     } catch (err) {
-      console.error("Failed to read personal AI connection", err);
+      logServerError("Failed to read personal AI connection", err);
       throw new AiServiceError("server_error", "Couldn't look up your saved AI connection. Please try again.");
     }
 
@@ -83,7 +84,7 @@ export async function withAiConnection<T>(
     try {
       quotaAllowed = await resolved.consumeQuota!(uid);
     } catch (err) {
-      console.error("Failed to consume AI quota", err);
+      logServerError("Failed to consume AI quota", err);
       throw new AiServiceError("server_error", "Couldn't check your AI quota. Please try again.");
     }
 
@@ -95,7 +96,7 @@ export async function withAiConnection<T>(
     try {
       systemConnection = await resolved.getSystemConnectionRaw!(undefined, systemTried);
     } catch (err) {
-      console.error("Failed to read system AI connection", err);
+      logServerError("Failed to read system AI connection", err);
       throw new AiServiceError("server_error", "Couldn't look up a system AI connection. Please try again.");
     }
 
@@ -131,7 +132,7 @@ async function runAttemptWithConnection<T>(
   try {
     apiKey = deps.decryptApiKey(connection.encryptedApiKey);
   } catch (err) {
-    console.error(`Failed to decrypt ${kind} AI connection`, err);
+    logServerError(`Failed to decrypt ${kind} AI connection`, err);
     throw new AiServiceError(
       "auth",
       kind === "personal"

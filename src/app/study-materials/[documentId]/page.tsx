@@ -74,7 +74,7 @@ function StudyMaterialDetailContent() {
         const [url] = await getSignedDriveUrls(idToken, user.uid, [{
           fileId: doc.driveFileId,
           connectionId: doc.driveConnectionId,
-          purpose: "stream",
+          purpose: doc.googleNative ? "export" : "stream",
         }]);
         if (active) setSignedStreamUrl(url);
       } catch (error) {
@@ -90,7 +90,7 @@ function StudyMaterialDetailContent() {
     return refreshSignedDriveUrl(idToken, user.uid, {
       fileId: doc.driveFileId,
       connectionId: doc.driveConnectionId,
-      purpose: "stream",
+      purpose: doc.googleNative ? "export" : "stream",
     });
   }
 
@@ -101,7 +101,7 @@ function StudyMaterialDetailContent() {
       const [url] = await getSignedDriveUrls(idToken, user.uid, [{
         fileId: doc.driveFileId,
         connectionId: doc.driveConnectionId,
-        purpose: "download",
+        purpose: doc.googleNative ? "export_download" : "download",
       }]);
       window.location.href = url;
     } catch {

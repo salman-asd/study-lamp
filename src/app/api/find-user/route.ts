@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminAuth } from "@/lib/server/firebase-admin";
 import { checkRateLimit } from "@/lib/server/rateLimit";
+import { logServerError } from "@/lib/server/logError";
 
 export async function GET(request: Request) {
   const authorization = request.headers.get("authorization");
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ found: true, uid: profile.uid });
   } catch (error: any) {
     if (error?.code === "auth/user-not-found") return NextResponse.json({ found: false });
-    console.error("Recipient lookup failed", error);
+    logServerError("Recipient lookup failed", error);
     return NextResponse.json({ error: "Recipient lookup failed on the server." }, { status: 500 });
   }
 }

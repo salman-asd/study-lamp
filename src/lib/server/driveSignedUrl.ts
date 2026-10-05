@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 
-export type DriveUrlPurpose = "stream" | "download" | "thumb";
+export type DriveUrlPurpose = "stream" | "download" | "thumb" | "export" | "export_download";
 
 export interface DriveSignedUrlInput {
   uid: string;
@@ -19,6 +19,8 @@ export const DRIVE_URL_TTL_SECONDS: Record<DriveUrlPurpose, number> = {
   stream: 6 * 60 * 60,
   download: 10 * 60,
   thumb: 24 * 60 * 60,
+  export: 30 * 60,
+  export_download: 10 * 60,
 };
 
 // A signed URL is a bearer capability until exp. Disconnecting the Drive

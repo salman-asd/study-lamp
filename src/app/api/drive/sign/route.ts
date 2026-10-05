@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { findOwnedDriveFiles, ownedKey } from "@/lib/server/driveOwnership";
 import { isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
+import { logServerError } from "@/lib/server/logError";
 import { signDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PURPOSES = new Set<DriveUrlPurpose>(["stream", "download", "thumb"]);
+const PURPOSES = new Set<DriveUrlPurpose>(["stream", "download", "thumb", "export", "export_download"]);
 const MAX_ITEMS = 50;
 
 interface SignItem {
@@ -62,7 +63,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
 
     return NextResponse.json({ urls }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    console.error("Failed to sign Drive URLs", error);
+    logServerError("Failed to sign Drive URLs", error);
     return NextResponse.json({ error: "Couldn't prepare Drive URLs." }, { status: 500 });
   }
 }, { scope: "drive:sign", preset: "sign" });

@@ -1,32 +1,23 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { logServerError } from "@/lib/server/logError";
 import {
   createConnection,
   listConnections,
   validateCreateInput,
 } from "@/lib/server/systemAiConnections";
 
-export async function GET(req: NextRequest) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const GET = withAuthedRoute(async () => {
   try {
     const connections = await listConnections();
     return NextResponse.json({ connections }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
-    console.error("Failed to list system AI connections", err);
+  } catch (err: unknown) {
+    logServerError("Failed to list system AI connections", err);
     return NextResponse.json({ error: "Failed to load connections." }, { status: 500 });
   }
-}
+}, { admin: true });
 
-export async function POST(req: NextRequest) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const POST = withAuthedRoute(async ({ req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -45,8 +36,8 @@ export async function POST(req: NextRequest) {
       status: 201,
       headers: { "Cache-Control": "private, no-store" },
     });
-  } catch (err: any) {
-    console.error("Failed to create system AI connection", err);
+  } catch (err: unknown) {
+    logServerError("Failed to create system AI connection", err);
     return NextResponse.json({ error: "Failed to save connection." }, { status: 500 });
   }
-}
+}, { admin: true });

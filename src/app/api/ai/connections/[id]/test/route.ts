@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getConnectionRaw, recordTestResult } from "@/lib/server/aiConnections";
+import { logServerError } from "@/lib/server/logError";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { validateGeminiConnection } from "@/lib/ai/providers/gemini";
 import { validateOpenAiConnection } from "@/lib/ai/providers/openai";
@@ -32,7 +33,7 @@ export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, params 
     // Decryption failure (e.g. the encryption key rotated without
     // re-encrypting stored connections) is a server misconfiguration, not
     // something the user's key can fix — don't mark the connection invalid.
-    console.error("Failed to decrypt AI connection for test", err);
+    logServerError("Failed to decrypt AI connection for test", err);
     return NextResponse.json(
       { error: "Could not read this connection's stored key. Try re-adding it." },
       { status: 500 }

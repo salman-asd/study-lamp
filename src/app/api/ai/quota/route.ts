@@ -1,32 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUid, requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { logServerError } from "@/lib/server/logError";
 import { getOrInitQuota, setUserQuotaOverride, validateQuotaOverrideInput } from "@/lib/server/aiQuota";
 
-export async function GET(req: NextRequest) {
-  const authUid = await requireAuthenticatedUid(req);
-  if (!authUid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const targetUid = new URL(req.url).searchParams.get("uid") || authUid;
-  const canReadTarget = targetUid === authUid || !!(await requireAdminUid(req));
-  if (!canReadTarget) {
+export const GET = withAuthedRoute(async ({ uid, req }) => {
+  const targetUid = new URL(req.url).searchParams.get("uid") || uid;
+  if (targetUid !== uid) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
     const quota = await getOrInitQuota(targetUid);
     return NextResponse.json({ quota }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
-    console.error("Failed to load quota", err);
+  } catch (err: unknown) {
+    logServerError("Failed to load quota", err);
     return NextResponse.json({ error: "Failed to load quota." }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(req: NextRequest) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const PATCH = withAuthedRoute(async ({ req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -47,8 +39,8 @@ export async function PATCH(req: NextRequest) {
   try {
     const quota = await setUserQuotaOverride(uid, body as any);
     return NextResponse.json({ quota }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
-    console.error("Failed to update quota", err);
+  } catch (err: unknown) {
+    logServerError("Failed to update quota", err);
     return NextResponse.json({ error: "Failed to update quota." }, { status: 500 });
   }
-}
+}, { admin: true });

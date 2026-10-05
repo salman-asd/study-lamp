@@ -1,4 +1,5 @@
 import type { AiProvider } from "@/types";
+import { logServerError } from "@/lib/server/logError";
 
 const MODEL_ENDPOINTS: Record<AiProvider, string> = {
   gemini: "https://generativelanguage.googleapis.com/v1beta/models",
@@ -78,7 +79,7 @@ export async function fetchModelsForProvider(
 
   if (!response.ok) {
     // Only the status is logged; provider bodies can echo request details.
-    console.error(`AI models lookup failed (${provider}, status ${response.status})`);
+    logServerError(`AI models lookup failed (${provider}, status ${response.status})`);
     return { error: modelsErrorMessage(response.status), status: modelsErrorStatus(response.status) };
   }
 

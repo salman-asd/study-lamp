@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createConnection, listConnections, validateCreateInput } from "@/lib/server/aiConnections";
+import { logServerError } from "@/lib/server/logError";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // GET /api/ai/connections — list the caller's own connections, masked.
@@ -8,7 +9,7 @@ export const GET = withAuthedRoute(async ({ uid }) => {
     const connections = await listConnections(uid);
     return NextResponse.json({ connections }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    console.error("Failed to list AI connections", err);
+    logServerError("Failed to list AI connections", err);
     return NextResponse.json({ error: "Failed to load connections." }, { status: 500 });
   }
 });
@@ -36,7 +37,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
   } catch (err: any) {
     // Deliberately generic — never let a raw error object (which could
     // theoretically echo back request data) reach the client.
-    console.error("Failed to create AI connection", err);
+    logServerError("Failed to create AI connection", err);
     return NextResponse.json({ error: "Failed to save connection." }, { status: 500 });
   }
 });

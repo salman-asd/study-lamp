@@ -560,6 +560,45 @@ export interface DriveConnectionSummary {
   lastUsedAt: string | null;
 }
 
+export type GoogleWorkspaceFeature = "calendar" | "tasks";
+
+export interface GoogleSyncCounts {
+  synced: number;
+  failed: number;
+  remoteDeleted: number;
+  noDate: number;
+  orphaned: number;
+}
+
+export interface GoogleCalendarConnection {
+  id: string;
+  enabled: boolean;
+  calendarId?: string | null;
+  calendarName?: string | null;
+  lastSyncAt?: string | null;
+  counts: GoogleSyncCounts;
+  createdAt: FirestoreTimeValue;
+  updatedAt: FirestoreTimeValue;
+}
+
+export interface GoogleConnectionSummary {
+  id: string;
+  googleEmail: string;
+  status: "active" | "invalid";
+  grantedScopes: GoogleWorkspaceFeature[];
+  calendarEnabled: boolean;
+  tasksEnabled: boolean;
+  createdAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface GoogleSyncStatus {
+  enabled: boolean;
+  calendarName: string | null;
+  lastSyncAt: string | null;
+  counts: GoogleSyncCounts;
+}
+
 /**
  * ─────────────────────────────────────────────────────────────────────────
  * STUDY MATERIALS (Phases 18-19) — PDFs and Office documents
@@ -582,6 +621,7 @@ export interface PersonalDocument {
   title: string;
   fileType: DocumentFileType;
   mimeType: string;
+  googleNative?: boolean;
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;

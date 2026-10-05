@@ -3,6 +3,7 @@ import { generateVideoQuiz } from "@/lib/ai/aiService";
 import { resolveTranscript } from "@/lib/ai/universalTranscript";
 import { getAiPreferences, resolveAiLanguage } from "@/lib/server/aiPreferences";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
+import { logServerError } from "@/lib/server/logError";
 import { buildSourceHash } from "@/lib/server/sourceHash";
 import {
   getPersonalVideoQuiz,
@@ -69,7 +70,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
   try {
     transcript = await resolveTranscript({ youtubeVideoId, manualTranscript });
   } catch (error) {
-    console.error("Unexpected error resolving a transcript for quiz generation", error);
+    logServerError("Unexpected error resolving a transcript for quiz generation", error);
     return NextResponse.json({ error: "Unable to retrieve a transcript for this video." }, { status: 502 });
   }
 
@@ -121,7 +122,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
         await saveSharedVideoQuiz(playlistId, videoId, questions, sourceHash);
       }
     } catch (cacheError) {
-      console.error("Generated quiz could not be cached", cacheError);
+      logServerError("Generated quiz could not be cached", cacheError);
     }
 
     return NextResponse.json({ questions }, { headers: { "Cache-Control": "private, no-store" } });

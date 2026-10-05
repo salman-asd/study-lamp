@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessTokenForConnection, withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { fetchFileContent } from "@/lib/server/googleDrive";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 import { createDriveTiming, type DriveTiming } from "@/lib/server/timing";
@@ -36,8 +37,12 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
   const exp = Number(req.nextUrl.searchParams.get("e"));
   const purpose = req.nextUrl.searchParams.get("p") as DriveUrlPurpose | null;
   const sig = req.nextUrl.searchParams.get("s") || "";
-  const allowedPurpose = purpose === "stream" || purpose === "download";
-  const validSignature = allowedPurpose && await timing.measure("signature_ms", async () => (
+  const exportPurpose = purpose === "export" || purpose === "export_download";
+  const allowedPurpose = purpose === "stream" || purpose === "download" || exportPurpose;
+  if (!purpose || !allowedPurpose) {
+    return NextResponse.json({ error: "Invalid or expired Drive URL." }, { status: 401 });
+  }
+  const validSignature = await timing.measure("signature_ms", async () => (
     verifyDriveUrl({ uid, fileId: params.fileId, connectionId, purpose, exp, sig })
   ));
   if (!validSignature) {
@@ -45,13 +50,25 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
   }
   if (!checkRateLimit(uid, { scope: "drive:stream", preset: "stream" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
 
-  const download = purpose === "download";
+  const download = purpose === "download" || purpose === "export_download";
 
   try {
     const upstream = await withDriveAccessToken(
       uid,
       connectionId,
-      (accessToken) => timing.measure("upstream_ms", () => fetchFileContent(accessToken, params.fileId, req.headers.get("range"))),
+      async (accessToken) => {
+        if (exportPurpose) {
+          const metadata = await import("@/lib/server/googleDrive").then(({ getFileMetadata, nativeExportMime }) => getFileMetadata(accessToken, params.fileId).then((meta) => ({
+            meta,
+            exportMime: nativeExportMime(meta.mimeType),
+          })));
+          if (!metadata.exportMime) {
+            throw new Error("This Drive file isn't a supported Google native document.");
+          }
+          return timing.measure("upstream_ms", () => import("@/lib/server/googleDrive").then(({ exportFile }) => exportFile(accessToken, params.fileId, metadata.exportMime!)));
+        }
+        return timing.measure("upstream_ms", () => fetchFileContent(accessToken, params.fileId, req.headers.get("range")));
+      },
       () => timing.measure("token_ms", () => getAccessTokenForConnection(uid, connectionId)),
     );
 
@@ -78,7 +95,7 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }
-    console.error("Drive stream proxy failed", err);
+    logServerError("Drive stream proxy failed", err);
     return NextResponse.json({ error: "Couldn't reach Google Drive." }, { status: 502 });
   }
 }

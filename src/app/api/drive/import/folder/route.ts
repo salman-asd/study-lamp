@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
+import { logServerError } from "@/lib/server/logError";
 import { DriveApiError, folderHasVisibleChildren, getFileMetadata, listFolderVideoFiles, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { createPlaylistAdmin, bulkAddDriveVideosAdmin } from "@/lib/server/driveImport";
 import { fetchAndSaveDriveThumbnails } from "@/lib/server/driveThumbnails";
@@ -78,7 +79,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (err instanceof DriveApiError && err.status === 429) {
       return NextResponse.json({ error: "Google Drive is rate-limiting requests. Try again in a minute." }, { status: 429, headers: { "Retry-After": "60" } });
     }
-    console.error("Drive folder import failed", err instanceof DriveApiError ? `DriveApiError ${err.status}` : err);
+    logServerError("Drive folder import failed", err instanceof DriveApiError ? `DriveApiError ${err.status}` : err);
     return NextResponse.json({ error: "Couldn't import that folder from Drive." }, { status: 502 });
   }
 }, { scope: "drive:import-folder", preset: "import" });

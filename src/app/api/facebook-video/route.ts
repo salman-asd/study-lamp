@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth } from "@/lib/server/firebase-admin";
+import { logServerError } from "@/lib/server/logError";
 import { isAllowedFacebookUrl, resolveFacebookRedirectUrl, fetchFacebookVideoOEmbed } from "@/lib/video-platforms/facebookGraph";
 import { detectVideoProvider, generateCanonicalUrl, generateFacebookAlternateUrl, generateFacebookOEmbedUrl } from "@/lib/video-platforms";
 
@@ -134,7 +135,7 @@ export async function GET(req: NextRequest) {
     // Metadata is best-effort for Facebook (see facebookGraph.ts) — a
     // thrown error here still degrades to manual entry rather than
     // blocking the add-video flow.
-    console.error(`[facebook-video] unexpected error resolving "${rawUrl}":`, err);
+    logServerError(`[facebook-video] unexpected error resolving "${rawUrl}":`, err);
     return NextResponse.json({ metadata: null, canonicalUrl: null, error: err?.message || "Failed to fetch Facebook video metadata" });
   }
 }

@@ -108,7 +108,8 @@ service cloud.firestore {
 
     function sameDriveReferences() {
       return request.resource.data.get('driveFileId', null) == resource.data.get('driveFileId', null) &&
-        request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null);
+        request.resource.data.get('driveConnectionId', null) == resource.data.get('driveConnectionId', null) &&
+        request.resource.data.get('googleNative', null) == resource.data.get('googleNative', null);
     }
 
     // Field validation shared by create and update of a personal video
@@ -146,6 +147,7 @@ service cloud.firestore {
         optionalString(data, 'driveConnectionId', 200) &&
         optionalString(data, 'md5Checksum', 100) &&
         optionalString(data, 'modifiedTime', 100) &&
+        optionalBool(data, 'googleNative') &&
         optionalString(data, 'categoryId', 200) &&
         optionalString(data, 'thumbnailUrl', 500) &&
         // sizeBytes is written as null when Drive does not report a size.

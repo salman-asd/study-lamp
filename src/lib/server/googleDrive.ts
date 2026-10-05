@@ -388,17 +388,69 @@ export async function startResumableUpload(
 
 export const SUPPORTED_VIDEO_MIME_PREFIX = "video/";
 
+export const NATIVE_GOOGLE_DOCUMENT_MIME_TYPES = [
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+] as const;
+
 export const SUPPORTED_DOCUMENT_MIME_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
   "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  ...NATIVE_GOOGLE_DOCUMENT_MIME_TYPES,
 ];
+
+export function nativeExportMime(mimeType: string): string | null {
+  switch (mimeType) {
+    case "application/vnd.google-apps.document":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "application/vnd.google-apps.spreadsheet":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    default:
+      return null;
+  }
+}
 
 export function documentFileTypeFromMime(mimeType: string): "pdf" | "docx" | "pptx" | "xlsx" | null {
   if (mimeType === "application/pdf") return "pdf";
+  if (mimeType === "application/vnd.google-apps.document") return "docx";
+  if (mimeType === "application/vnd.google-apps.spreadsheet") return "xlsx";
   if (mimeType.includes("wordprocessingml")) return "docx";
   if (mimeType.includes("presentationml")) return "pptx";
   if (mimeType.includes("spreadsheetml")) return "xlsx";
   return null;
+}
+
+export async function exportFile(accessToken: string, fileId: string, exportMime: string): Promise<Response> {
+  assertDriveId(fileId);
+  const allowedMime = new Set([
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ]);
+  if (!allowedMime.has(exportMime)) {
+    throw new Error("Unsupported Google export MIME type.");
+  }
+  const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}&supportsAllDrives=true`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 403) {
+    throw new DriveApiError(403, "This Google file is too large to export from Drive.");
+  }
+  if (!res.ok) {
+    throw new DriveApiError(res.status, `Unable to export the Google file (${res.status}).`);
+  }
+  return res;
+}
+
+export async function fetchDocumentBytes(
+  accessToken: string,
+  input: { driveFileId: string; mimeType: string; googleNative?: boolean },
+): Promise<Response> {
+  if (input.googleNative) {
+    const exportMime = nativeExportMime(input.mimeType);
+    if (!exportMime) throw new Error(`Unsupported Google native file type: ${input.mimeType}`);
+    return exportFile(accessToken, input.driveFileId, exportMime);
+  }
+  return fetchFileContent(accessToken, input.driveFileId, null);
 }

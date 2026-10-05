@@ -1,6 +1,6 @@
 import { adminDb } from "@/lib/server/firebase-admin";
 import { withDriveAccessToken } from "@/lib/server/driveConnections";
-import { fetchFileContent, getFileMetadata } from "@/lib/server/googleDrive";
+import { fetchDocumentBytes, getFileMetadata } from "@/lib/server/googleDrive";
 import { extractDocumentText, MAX_DOCUMENT_BYTES } from "@/lib/server/documentText";
 import { isSameDriveRevision } from "@/lib/server/documentContentUtils";
 import { hashDocumentText } from "@/lib/server/sourceHash";
@@ -12,10 +12,12 @@ export interface LoadedDocument {
   id: string;
   title: string;
   fileType: DocumentFileType;
+  mimeType?: string;
   driveFileId: string;
   driveConnectionId: string;
   md5Checksum?: string | null;
   modifiedTime?: string | null;
+  googleNative?: boolean;
 }
 
 export async function getPersonalDocument(uid: string, documentId: string): Promise<LoadedDocument | null> {
@@ -26,10 +28,12 @@ export async function getPersonalDocument(uid: string, documentId: string): Prom
     id: snap.id,
     title: data.title,
     fileType: data.fileType,
+    mimeType: typeof data.mimeType === "string" ? data.mimeType : undefined,
     driveFileId: data.driveFileId,
     driveConnectionId: data.driveConnectionId,
     md5Checksum: data.md5Checksum ?? null,
     modifiedTime: data.modifiedTime ?? null,
+    googleNative: Boolean(data.googleNative),
   };
 }
 
@@ -91,7 +95,11 @@ export async function extractPersonalDocumentText(uid: string, doc: LoadedDocume
       return legacy.text; // migrated to chunks on the next extraction
     }
 
-    const response = await fetchFileContent(accessToken, doc.driveFileId, null);
+    const response = await fetchDocumentBytes(accessToken, {
+      driveFileId: doc.driveFileId,
+      mimeType: doc.mimeType || "application/octet-stream",
+      googleNative: Boolean(doc.googleNative),
+    });
     if (!response.ok) throw new Error(`Couldn't download "${doc.title}" from Drive (${response.status}).`);
     const bytes = await readDocumentBytes(response);
     const text = await extractDocumentText(bytes, doc.fileType);

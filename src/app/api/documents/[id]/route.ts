@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
+import { logServerError } from "@/lib/server/logError";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
@@ -43,7 +44,7 @@ export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, param
 
     return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    console.error("Document delete failed", error instanceof Error ? error.name : "unknown");
+    logServerError("Document delete failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Couldn't remove this document." }, { status: 500 });
   }
 }, { scope: "document-delete", limit: 60, tooManyMessage: "Too many requests. Please slow down.", retryAfterSeconds: null });

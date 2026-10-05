@@ -1,4 +1,5 @@
 import { getYouTubeTranscript, TranscriptUnavailableError } from "./transcript";
+import { logServerError } from "@/lib/server/logError";
 
 /**
  * Phase 4 (roadmap v3) — one transcript pipeline for every platform.
@@ -36,7 +37,7 @@ export async function resolveTranscript(video: TranscriptSource): Promise<string
       // genuinely unexpected error is swallowed here too: this function's
       // contract is "best available transcript, or null", never a throw.
       if (!(error instanceof TranscriptUnavailableError)) {
-        console.error("Unexpected error fetching YouTube transcript", error);
+        logServerError("Unexpected error fetching YouTube transcript", error);
       }
     }
   }

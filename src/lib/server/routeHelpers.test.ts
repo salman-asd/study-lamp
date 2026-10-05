@@ -3,6 +3,7 @@ import { describe, it, mock } from "node:test";
 import { NextRequest } from "next/server";
 import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
 import { AI_STATUS_BY_CODE, aiErrorResponse, createAuthedRoute, readJsonObject, withAuthedRoute } from "./routeHelpers";
+import { logServerError } from "./logError";
 
 describe("AI_STATUS_BY_CODE", () => {
   it("keeps the status table every route used before the refactor", () => {
@@ -42,6 +43,19 @@ describe("aiErrorResponse", () => {
       assert.deepEqual(await response.json(), { error: "Something went wrong." });
       assert.equal(log.mock.calls.length, 1);
       assert.deepEqual(log.mock.calls[0].arguments, ["Failed: TypeError"]);
+    } finally {
+      log.mock.restore();
+    }
+  });
+});
+
+describe("logServerError", () => {
+  it("logs only the label, error name and numeric status when present", () => {
+    const log = mock.method(console, "error", () => {});
+    try {
+      const err = Object.assign(new TypeError("secret"), { status: 503 });
+      logServerError("Drive import failed", err);
+      assert.deepEqual(log.mock.calls[0].arguments, ["Drive import failed: TypeError status=503"]);
     } finally {
       log.mock.restore();
     }

@@ -55,11 +55,11 @@ const TYPE_ICON: Record<PersonalDocument["fileType"], React.ReactNode> = {
   xlsx: <FileSpreadsheet className="h-5 w-5 text-emerald-600" />,
 };
 const IMPORT_OPTIONS: Record<StudyMaterialTypeFilter, { kinds: DrivePickerKind[]; accept: string }> = {
-  all: { kinds: ["pdf", "docx", "pptx", "xlsx"], accept: ".pdf,.docx,.pptx,.xlsx" },
+  all: { kinds: ["pdf", "docx", "pptx", "xlsx", "gdoc", "gsheet"], accept: ".pdf,.docx,.pptx,.xlsx" },
   pdf: { kinds: ["pdf"], accept: ".pdf" },
-  docx: { kinds: ["docx"], accept: ".docx" },
+  docx: { kinds: ["docx", "gdoc"], accept: ".docx" },
   pptx: { kinds: ["pptx"], accept: ".pptx" },
-  xlsx: { kinds: ["xlsx"], accept: ".xlsx" },
+  xlsx: { kinds: ["xlsx", "gsheet"], accept: ".xlsx" },
 };
 
 export default function StudyMaterialsPage() {

@@ -54,7 +54,7 @@ export interface DriveImportResult {
   documentId?: string;
 }
 
-export type DriveSignedUrlPurpose = "stream" | "download" | "thumb";
+export type DriveSignedUrlPurpose = "stream" | "download" | "thumb" | "export" | "export_download";
 
 export interface DriveSignedUrlItem {
   fileId: string;

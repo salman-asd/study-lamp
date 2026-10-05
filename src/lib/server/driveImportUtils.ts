@@ -17,9 +17,13 @@ export function assignDriveVideoOrders<T>(items: T[], startingOrder: number): Ar
 // ── Multi-file import (POST /api/drive/import/files) ────────────────────────
 export type ImportableDocumentType = "pdf" | "docx" | "xlsx";
 
-/** PowerPoint is intentionally NOT importable (product decision), so .pptx is skipped. */
+/** PowerPoint is intentionally NOT importable (product decision), so .pptx is skipped.
+ *  Native Google Docs/Sheets are treated as their exported .docx/.xlsx equivalents.
+ */
 export function importableDocumentType(mimeType: string): ImportableDocumentType | null {
   if (mimeType === "application/pdf") return "pdf";
+  if (mimeType === "application/vnd.google-apps.document") return "docx";
+  if (mimeType === "application/vnd.google-apps.spreadsheet") return "xlsx";
   if (mimeType.includes("wordprocessingml")) return "docx";
   if (mimeType.includes("spreadsheetml")) return "xlsx";
   return null;
@@ -29,7 +33,7 @@ export type DriveSkipReason = "folder" | "unsupported_type" | "inaccessible" | "
 
 export interface PartitionedDriveFiles<T> {
   videos: T[];
-  documents: Array<{ file: T; fileType: ImportableDocumentType }>;
+  documents: Array<{ file: T; fileType: ImportableDocumentType; googleNative: boolean }>;
   skipped: Array<{ fileId: string; reason: DriveSkipReason }>;
 }
 
@@ -43,8 +47,12 @@ export function partitionDriveFiles<T extends { id: string; mimeType: string }>(
       result.videos.push(file);
     } else {
       const fileType = importableDocumentType(file.mimeType);
-      if (fileType) result.documents.push({ file, fileType });
-      else result.skipped.push({ fileId: file.id, reason: "unsupported_type" });
+      if (fileType) {
+        const googleNative = file.mimeType === "application/vnd.google-apps.document" || file.mimeType === "application/vnd.google-apps.spreadsheet";
+        result.documents.push({ file, fileType, googleNative });
+      } else {
+        result.skipped.push({ fileId: file.id, reason: "unsupported_type" });
+      }
     }
   }
   return result;

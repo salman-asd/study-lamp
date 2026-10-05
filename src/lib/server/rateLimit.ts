@@ -14,6 +14,7 @@ export const RATE_LIMITS = {
   thumbnail: { limit: 600 },
   sign: { limit: 180 },
   import: { limit: 30 },
+  googleSync: { limit: 30 },
 } as const;
 
 export type RateLimitPreset = keyof typeof RATE_LIMITS;
