@@ -1,8 +1,10 @@
 ﻿import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
-import { getOrCreateStudyLampCalendar, type GoogleCalendarEventLike } from "@/lib/server/googleCalendar";
-import { refreshWorkspaceAccessToken, revokeGoogleToken } from "@/lib/server/googleOAuth";
+import { getOrCreateStudyLampCalendar } from "@/lib/server/googleCalendar";
+import { refreshWorkspaceAccessToken, revokeWorkspaceToken } from "@/lib/server/googleWorkspaceAuth";
+import { DriveTokenCache } from "@/lib/server/driveTokenCache";
+import { runWithDriveToken } from "@/lib/server/driveRequest";
 import { type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
 import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus } from "@/types";
 
@@ -14,7 +16,9 @@ const DEFAULT_COUNTS: GoogleSyncCounts = {
   orphaned: 0,
 };
 
-const accessTokenCache = new Map<string, { token: string; exp: number }>();
+// Reuse the same primitives as the Drive token path (Step W2 spec): a bounded
+// in-memory access-token cache and the shared 401-retry wrapper.
+const accessTokenCache = new DriveTokenCache(500, 60_000);
 const lastUsedWriteAt = new Map<string, number>();
 const LAST_USED_WRITE_INTERVAL_MS = 15 * 60_000;
 
@@ -30,10 +34,13 @@ function toIso(value: admin.firestore.Timestamp | null | undefined): string | nu
   return value ? value.toDate().toISOString() : null;
 }
 
-function toSummary(id: string, data: FirebaseFirestore.DocumentData): GoogleConnectionSummary {
+export function googleConnectionSummaryFrom(id: string, data: FirebaseFirestore.DocumentData): GoogleConnectionSummary {
   const grantedScopes = Array.isArray(data.grantedScopes) ? data.grantedScopes.filter((scope): scope is GoogleWorkspaceFeature => scope === "calendar" || scope === "tasks") : [];
   const calendarEnabled = Boolean(data.calendar?.enabled ?? data.enabled ?? false);
   const tasksEnabled = Boolean(data.tasks?.enabled ?? false);
+  // EXACT key set returned to the browser. Tokens and ciphertext
+  // (encryptedRefreshToken) are deliberately never included; a test asserts
+  // this key set so a future field cannot leak silently.
   return {
     id,
     googleEmail: String(data.googleEmail ?? ""),
@@ -48,13 +55,13 @@ function toSummary(id: string, data: FirebaseFirestore.DocumentData): GoogleConn
 
 export async function listGoogleConnections(uid: string): Promise<GoogleConnectionSummary[]> {
   const snap = await googleConnectionsRef(uid).orderBy("createdAt", "asc").get();
-  return snap.docs.map((doc) => toSummary(doc.id, doc.data()));
+  return snap.docs.map((doc) => googleConnectionSummaryFrom(doc.id, doc.data()));
 }
 
 export async function getGoogleConnectionSummary(uid: string, id: string): Promise<GoogleConnectionSummary | null> {
   const snap = await googleConnectionsRef(uid).doc(id).get();
   if (!snap.exists) return null;
-  return toSummary(snap.id, snap.data()!);
+  return googleConnectionSummaryFrom(snap.id, snap.data()!);
 }
 
 export async function upsertGoogleConnection(
@@ -83,19 +90,22 @@ export async function upsertGoogleConnection(
       calendar: previous.calendar ?? { enabled: false },
       tasks: previous.tasks ?? { enabled: false },
       createdAt: previous.createdAt ?? now,
+      lastUsedAt: previous.lastUsedAt ?? null,
+      // MERGE rather than replace: an incremental "Allow Tasks access" flow
+      // must never drop a Calendar grant the user already made.
       grantedScopes: Array.from(new Set([...(Array.isArray(previous.grantedScopes) ? previous.grantedScopes : []), ...doc.grantedScopes])),
       updatedAt: now,
     }, { merge: true });
     invalidateAccessToken(uid, ref.id);
     const snap = await ref.get();
-    return toSummary(snap.id, snap.data()!);
+    return googleConnectionSummaryFrom(snap.id, snap.data()!);
   }
 
   const ref = googleConnectionsRef(uid).doc();
   await ref.set(doc);
   invalidateAccessToken(uid, ref.id);
   const snap = await ref.get();
-  return toSummary(snap.id, snap.data()!);
+  return googleConnectionSummaryFrom(snap.id, snap.data()!);
 }
 
 export async function deleteGoogleConnection(uid: string, connectionId: string): Promise<boolean> {
@@ -104,14 +114,15 @@ export async function deleteGoogleConnection(uid: string, connectionId: string):
   if (!snap.exists) return false;
   invalidateAccessToken(uid, connectionId);
   const refreshToken = decryptApiKey(snap.data()!.encryptedRefreshToken);
-  await revokeGoogleToken(refreshToken).catch(() => undefined);
+  await revokeWorkspaceToken(refreshToken).catch(() => undefined);
   await ref.delete();
   return true;
 }
 
 export function invalidateAccessToken(uid: string, connectionId: string): void {
-  accessTokenCache.delete(cacheKey(uid, connectionId));
-  lastUsedWriteAt.delete(cacheKey(uid, connectionId));
+  const key = cacheKey(uid, connectionId);
+  accessTokenCache.invalidate(key);
+  lastUsedWriteAt.delete(key);
 }
 
 export class GoogleConnectionError extends Error {
@@ -122,6 +133,10 @@ export class GoogleConnectionError extends Error {
   }
 }
 
+/** Runs `operation` with a fresh access token for the connection. Delegates to
+ *  the shared runWithDriveToken wrapper, which retries the operation once after
+ *  a Google 401 (refreshing the token in between) and invalidates the cache.
+ *  The optional `tokenProvider` is injectable for tests. */
 export async function withGoogleAccessToken<T>(
   uid: string,
   connectionId: string,
@@ -129,62 +144,95 @@ export async function withGoogleAccessToken<T>(
   operation: (accessToken: string) => Promise<T>,
   tokenProvider: () => Promise<string> = () => getAccessTokenForConnection(uid, connectionId, requiredFeature),
 ): Promise<T> {
-  const accessToken = await tokenProvider();
-  try {
-    return await operation(accessToken);
-  } catch (error) {
-    if (error instanceof GoogleConnectionError) throw error;
-    throw error;
-  } finally {
-    invalidateAccessToken(uid, connectionId);
-  }
+  return runWithDriveToken(
+    tokenProvider,
+    () => invalidateAccessToken(uid, connectionId),
+    operation,
+  );
 }
 
-export async function getAccessTokenForConnection(
-  uid: string,
-  connectionId: string,
+export interface GoogleAccessTokenDependencies {
+  refreshAccessToken: typeof refreshWorkspaceAccessToken;
+}
+
+/** Pure scope check used by both the token path and its tests. */
+export function grantedFeaturesOf(data: FirebaseFirestore.DocumentData): GoogleWorkspaceFeature[] {
+  return Array.isArray(data.grantedScopes)
+    ? data.grantedScopes.filter((scope: unknown): scope is GoogleWorkspaceFeature => scope === "calendar" || scope === "tasks")
+    : [];
+}
+
+/** Pure core of the token path: refuses a connection missing `requiredFeature`
+ *  (scope_missing), refreshes through the injected `refresh`, and classifies
+ *  failures as invalid (revoked/expired refresh token) or network. Extracted so
+ *  it can be unit-tested with an injected refresh function and no Firestore. */
+export async function resolveGoogleAccessToken(
+  data: FirebaseFirestore.DocumentData,
   requiredFeature: GoogleWorkspaceFeature,
-): Promise<string> {
-  const key = cacheKey(uid, connectionId);
-  const cached = accessTokenCache.get(key);
-  if (cached && cached.exp > Date.now() + 60_000) return cached.token;
-
-  const ref = googleConnectionsRef(uid).doc(connectionId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
-
-  const data = snap.data()!;
-  const grantedScopes = Array.isArray(data.grantedScopes) ? data.grantedScopes.filter((scope): scope is GoogleWorkspaceFeature => scope === "calendar" || scope === "tasks") : [];
-  if (!grantedScopes.includes(requiredFeature)) {
+  refresh: (refreshToken: string) => Promise<{ accessToken: string; expiresIn: number }>,
+  now = Date.now(),
+): Promise<{ token: string; expiresAt: number }> {
+  if (!grantedFeaturesOf(data).includes(requiredFeature)) {
     throw new GoogleConnectionError("scope_missing", `This Google connection does not have ${requiredFeature} access enabled.`);
   }
 
   const refreshToken = decryptApiKey(data.encryptedRefreshToken);
   try {
-    const response = await refreshWorkspaceAccessToken(refreshToken);
-    const exp = Date.now() + Math.max(0, response.expiresIn) * 1000;
-    accessTokenCache.set(key, { token: response.accessToken, exp });
+    const { accessToken, expiresIn } = await refresh(refreshToken);
+    return { token: accessToken, expiresAt: now + Math.max(0, expiresIn) * 1000 };
+  } catch (error: any) {
+    if (error?.googleAuthInvalid || error?.driveAuthInvalid) {
+      throw new GoogleConnectionError("invalid", "This Google connection needs to be reconnected.");
+    }
+    throw new GoogleConnectionError("network", "Couldn't reach Google. Please try again shortly.");
+  }
+}
 
-    const lastWrittenAt = lastUsedWriteAt.get(key) ?? 0;
+/** Returns a cached Workspace access token, refreshing it through the injected
+ *  `refreshAccessToken` (defaults to the real Google call). Refuses a
+ *  connection that is missing the required feature with a scope_missing error,
+ *  marks the connection invalid on invalid_grant, and writes lastUsedAt at most
+ *  once every 15 minutes. */
+export async function getAccessTokenForConnection(
+  uid: string,
+  connectionId: string,
+  requiredFeature: GoogleWorkspaceFeature,
+  dependencies: Partial<GoogleAccessTokenDependencies> = {},
+): Promise<string> {
+  const key = cacheKey(uid, connectionId);
+  return accessTokenCache.get(key, async () => {
+    const ref = googleConnectionsRef(uid).doc(connectionId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+
+    const data = snap.data()!;
     const now = Date.now();
+    const refresh = dependencies.refreshAccessToken ?? refreshWorkspaceAccessToken;
+
+    let resolved: { token: string; expiresAt: number };
+    try {
+      resolved = await resolveGoogleAccessToken(data, requiredFeature, refresh, now);
+    } catch (error) {
+      if (error instanceof GoogleConnectionError && error.code === "invalid") {
+        invalidateAccessToken(uid, connectionId);
+        await ref.update({ status: "invalid", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
+      throw error;
+    }
+
+    const storedLastUsedAt = typeof data.lastUsedAt?.toMillis === "function" ? data.lastUsedAt.toMillis() : 0;
+    const lastWrittenAt = Math.max(storedLastUsedAt, lastUsedWriteAt.get(key) ?? 0);
     if (now - lastWrittenAt >= LAST_USED_WRITE_INTERVAL_MS) {
       try {
         await ref.update({ lastUsedAt: admin.firestore.FieldValue.serverTimestamp() });
         lastUsedWriteAt.set(key, now);
       } catch {
-        // Ignore metadata failures; the access token still works.
+        // Usage metadata must never prevent using a valid token.
       }
     }
 
-    return response.accessToken;
-  } catch (error: any) {
-    if (error?.googleAuthInvalid) {
-      invalidateAccessToken(uid, connectionId);
-      await ref.update({ status: "invalid", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-      throw new GoogleConnectionError("invalid", "This Google connection needs to be reconnected.");
-    }
-    throw new GoogleConnectionError("network", "Couldn't reach Google. Please try again shortly.");
-  }
+    return resolved;
+  });
 }
 
 export async function getGoogleCalendarConnection(uid: string, id = "calendar"): Promise<GoogleCalendarConnection | null> {

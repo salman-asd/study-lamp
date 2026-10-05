@@ -1,70 +1,22 @@
-﻿import crypto from "crypto";
-import { upsertGoogleConnection } from "@/lib/server/googleConnections";
-import { featuresFromGrantedScopes, scopesForFeatures, type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
+﻿// Step W2: generic Google OAuth2 primitives, shared by the Drive flow
+// (src/lib/server/googleDrive.ts) and the Workspace flow
+// (src/lib/server/googleWorkspaceAuth.ts and the /api/google/* routes).
+//
+// Every function takes an explicit {clientId, clientSecret, redirectPath}
+// config so the two OAuth clients (Drive and Workspace) each pass their own
+// credentials without this module knowing about either. Nothing here reads
+// env vars directly — the callers decide which client to use.
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";
 const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-const STATE_TTL_MS = 10 * 60 * 1000;
+const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";
 
-function env(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not configured.`);
-  return value;
-}
-
-export function isWorkspaceConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_WORKSPACE_CLIENT_ID && process.env.GOOGLE_WORKSPACE_CLIENT_SECRET && process.env.GOOGLE_WORKSPACE_OAUTH_STATE_SECRET);
-}
-
-export function buildWorkspaceAuthUrl(origin: string, state: string, features: readonly GoogleWorkspaceFeature[] = []): string {
-  const params = new URLSearchParams({
-    client_id: env("GOOGLE_WORKSPACE_CLIENT_ID"),
-    redirect_uri: `${origin}/api/google/auth/callback`,
-    response_type: "code",
-    scope: scopesForFeatures(features).join(" "),
-    access_type: "offline",
-    include_granted_scopes: "true",
-    prompt: "consent",
-    state,
-  });
-  return `${AUTH_ENDPOINT}?${params.toString()}`;
-}
-
-export function signWorkspaceState(uid: string, nonce: string, features: readonly GoogleWorkspaceFeature[] = [], nowMs = Date.now()): string {
-  const payload = JSON.stringify({ uid, nonce, features: [...features], ts: nowMs });
-  const secret = env("GOOGLE_WORKSPACE_OAUTH_STATE_SECRET");
-  const signature = crypto.createHmac("sha256", secret).update(`workspace.v1|${payload}`).digest("hex");
-  return Buffer.from(`${payload}.${signature}`).toString("base64url");
-}
-
-export function verifyWorkspaceState(
-  state: string,
-  expectedNonce: string | null,
-  expectedFeatures: readonly GoogleWorkspaceFeature[] = [],
-  nowMs = Date.now(),
-): { uid: string; nonce: string; features: GoogleWorkspaceFeature[] } | null {
-  try {
-    const decoded = Buffer.from(state, "base64url").toString("utf8");
-    const lastDot = decoded.lastIndexOf(".");
-    if (lastDot <= 0) return null;
-    const payloadPart = decoded.slice(0, lastDot);
-    const sigPart = decoded.slice(lastDot + 1);
-    const payload = JSON.parse(payloadPart) as { uid?: string; nonce?: string; features?: string[]; ts?: number };
-    if (!payload.uid || !payload.nonce || !Number.isFinite(payload.ts)) return null;
-    const expectedSignature = crypto.createHmac("sha256", env("GOOGLE_WORKSPACE_OAUTH_STATE_SECRET")).update(`workspace.v1|${payloadPart}`).digest("hex");
-    if (!crypto.timingSafeEqual(Buffer.from(sigPart), Buffer.from(expectedSignature))) return null;
-    const age = nowMs - Number(payload.ts);
-    if (age < 0 || age > STATE_TTL_MS) return null;
-    if (expectedNonce && payload.nonce !== expectedNonce) return null;
-    const features = Array.isArray(payload.features) ? payload.features.filter((value): value is GoogleWorkspaceFeature => value === "calendar" || value === "tasks") : [];
-    if (expectedFeatures.length && features.length && !expectedFeatures.every((feature) => features.includes(feature))) return null;
-    if (features.length === 0 && expectedFeatures.length > 0) return null;
-    return { uid: payload.uid, nonce: payload.nonce, features };
-  } catch {
-    return null;
-  }
+export interface GoogleOAuthClient {
+  clientId: string;
+  clientSecret: string;
+  /** Path only, e.g. "/api/google/auth/callback". The origin is supplied per call. */
+  redirectPath: string;
 }
 
 export interface GoogleTokenResponse {
@@ -75,80 +27,99 @@ export interface GoogleTokenResponse {
   token_type: string;
 }
 
-export async function exchangeCodeForTokens(code: string, origin: string): Promise<GoogleTokenResponse> {
+export function buildRedirectUri(origin: string, redirectPath: string): string {
+  return `${origin}${redirectPath.startsWith("/") ? redirectPath : `/${redirectPath}`}`;
+}
+
+/** Builds the Google consent URL. `options.scope` is a single space-separated
+ *  string (Drive keeps its combined DRIVE_SCOPE) so callers are not forced to
+ *  switch to an array. */
+export function buildGoogleAuthUrl(
+  origin: string,
+  state: string,
+  client: GoogleOAuthClient,
+  options: {
+    scope: string;
+    includeGrantedScopes?: boolean;
+    accessType?: "offline" | "online";
+    prompt?: string;
+  },
+): string {
+  const params = new URLSearchParams({
+    client_id: client.clientId,
+    redirect_uri: buildRedirectUri(origin, client.redirectPath),
+    response_type: "code",
+    scope: options.scope,
+    access_type: options.accessType ?? "offline",
+    prompt: options.prompt ?? "consent",
+    state,
+  });
+  if (options.includeGrantedScopes) params.set("include_granted_scopes", "true");
+  return `${AUTH_ENDPOINT}?${params.toString()}`;
+}
+
+/** Exchanges an authorization code for tokens. Throws on any non-2xx so the
+ *  caller can turn it into a plain-language message. */
+export async function exchangeCode(
+  code: string,
+  origin: string,
+  client: GoogleOAuthClient,
+): Promise<GoogleTokenResponse> {
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: env("GOOGLE_WORKSPACE_CLIENT_ID"),
-      client_secret: env("GOOGLE_WORKSPACE_CLIENT_SECRET"),
-      redirect_uri: `${origin}/api/google/auth/callback`,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      redirect_uri: buildRedirectUri(origin, client.redirectPath),
       grant_type: "authorization_code",
     }),
   });
   if (!response.ok) throw new Error(`Google token exchange failed (${response.status}).`);
-  return response.json() as Promise<GoogleTokenResponse>;
+  return (await response.json()) as GoogleTokenResponse;
 }
 
-export async function refreshWorkspaceAccessToken(refreshToken: string): Promise<{ accessToken: string; expiresIn: number }> {
+/** Refreshes a stored refresh token. Marks the thrown error with
+ *  `googleAuthInvalid` on 400/401 so callers can flag the connection invalid
+ *  (the refresh token was revoked or expired). */
+export async function refreshToken(
+  refreshTokenValue: string,
+  client: GoogleOAuthClient,
+): Promise<{ accessToken: string; expiresIn: number }> {
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: env("GOOGLE_WORKSPACE_CLIENT_ID"),
-      client_secret: env("GOOGLE_WORKSPACE_CLIENT_SECRET"),
+      refresh_token: refreshTokenValue,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
       grant_type: "refresh_token",
     }),
   });
   if (!response.ok) {
     const err: any = new Error(`Google token refresh failed (${response.status}).`);
+    // Two flag names are set so both existing consumers keep working
+    // unchanged: Drive reads `driveAuthInvalid`, Workspace reads
+    // `googleAuthInvalid`. Both mean "the refresh token is no longer valid".
     err.googleAuthInvalid = response.status === 400 || response.status === 401;
+    err.driveAuthInvalid = err.googleAuthInvalid;
     throw err;
   }
   const data = (await response.json()) as GoogleTokenResponse;
   return { accessToken: data.access_token, expiresIn: data.expires_in };
 }
 
-export async function revokeGoogleToken(token: string): Promise<void> {
+/** Best-effort revoke: a network failure here must never block removing the
+ *  local connection, so the rejection is swallowed. */
+export async function revoke(token: string): Promise<void> {
   await fetch(`${REVOKE_ENDPOINT}?token=${encodeURIComponent(token)}`, { method: "POST" }).catch(() => undefined);
 }
 
-export async function getGoogleAccountEmail(accessToken: string): Promise<string> {
-  const response = await fetch(`${USERINFO_ENDPOINT}?alt=json`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) throw new Error(`Google userinfo lookup failed (${response.status}).`);
+export async function fetchGoogleAccountEmail(accessToken: string): Promise<string> {
+  const response = await fetch(USERINFO_ENDPOINT, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error("Unable to read the connected Google account's email.");
   const data = (await response.json()) as { email?: string };
   if (!data.email) throw new Error("Google did not return an email.");
   return data.email;
-}
-
-export async function persistGoogleOAuthTokens(
-  uid: string,
-  code: string,
-  features: readonly GoogleWorkspaceFeature[],
-  origin: string,
-): Promise<{ ok: true; connection: Awaited<ReturnType<typeof upsertGoogleConnection>> } | { ok: false; error: string }> {
-  try {
-    const tokens = await exchangeCodeForTokens(code, origin);
-    if (!tokens.refresh_token) {
-      return { ok: false, error: "Google did not issue a refresh token. Try disconnecting any prior Study Lamp access and reconnect." };
-    }
-
-    const googleEmail = await getGoogleAccountEmail(tokens.access_token);
-    const connection = await upsertGoogleConnection(uid, {
-      googleEmail,
-      refreshToken: tokens.refresh_token,
-      grantedScopes: [...new Set(features)],
-    });
-    return { ok: true, connection };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Google OAuth failed." };
-  }
-}
-
-export function featuresFromGrantedScopeString(scopeString: string | null | undefined): GoogleWorkspaceFeature[] {
-  return featuresFromGrantedScopes(scopeString);
 }

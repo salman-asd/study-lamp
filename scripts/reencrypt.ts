@@ -11,8 +11,8 @@
 import { adminDb } from "../src/lib/server/firebase-admin";
 import { decryptApiKey, encryptApiKey } from "../src/lib/server/aiEncryption";
 
-type Label = "aiConnections" | "driveConnections" | "systemAiConnections";
-const LABELS: Label[] = ["aiConnections", "driveConnections", "systemAiConnections"];
+type Label = "aiConnections" | "driveConnections" | "googleConnections" | "systemAiConnections";
+const LABELS: Label[] = ["aiConnections", "driveConnections", "googleConnections", "systemAiConnections"];
 
 interface EncryptedField {
   label: Label;
@@ -27,7 +27,7 @@ async function loadEncryptedFields(): Promise<EncryptedField[]> {
   // listDocuments() returns refs only (no user data is downloaded) and includes users without a profile doc.
   const userRefs = await adminDb.collection("users").listDocuments();
   for (const userRef of userRefs) {
-    for (const label of ["aiConnections", "driveConnections"] as const) {
+    for (const label of ["aiConnections", "driveConnections", "googleConnections"] as const) {
       const field = label === "aiConnections" ? "encryptedApiKey" : "encryptedRefreshToken";
       const snapshot = await userRef.collection(label).get();
       for (const document of snapshot.docs) {
@@ -58,8 +58,8 @@ async function main() {
   console.log(apply ? "Mode: APPLY (will write)." : "Mode: DRY RUN (no writes). Pass --apply to write.");
 
   const fields = await loadEncryptedFields();
-  const total: Record<Label, number> = { aiConnections: 0, driveConnections: 0, systemAiConnections: 0 };
-  const failed: Record<Label, number> = { aiConnections: 0, driveConnections: 0, systemAiConnections: 0 };
+  const total: Record<Label, number> = { aiConnections: 0, driveConnections: 0, googleConnections: 0, systemAiConnections: 0 };
+  const failed: Record<Label, number> = { aiConnections: 0, driveConnections: 0, googleConnections: 0, systemAiConnections: 0 };
   const updates: Array<{ ref: FirebaseFirestore.DocumentReference; field: string; encrypted: string }> = [];
 
   for (const { label, ref, field, value } of fields) {

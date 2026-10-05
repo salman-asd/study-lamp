@@ -8,4 +8,4 @@ export const dynamic = "force-dynamic";
 export const GET = withAuthedRoute(async ({ uid }) => {
   const connections = await listGoogleConnections(uid);
   return NextResponse.json({ connections });
-}, { scope: "googleSync", preset: "googleSync", limit: 30, tooManyMessage: "Too many connection reads. Please slow down." });
+}, { scope: "google:connections", preset: "authSensitive" });

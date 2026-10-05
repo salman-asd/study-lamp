@@ -402,6 +402,20 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // Google Workspace OAuth connections (encrypted refresh tokens for the
+      // narrower Calendar/Tasks scopes). Denied to the client SDK entirely;
+      // all access goes through /api/google/* routes using the Admin SDK. See
+      // src/lib/server/googleConnections.ts.
+      match /googleConnections/{connectionId} {
+        allow read, write: if false;
+      }
+
+      // Step W3 will store goal↔event mapping docs here. Denied up front so the
+      // mapping can never be read or written by the client SDK.
+      match /googleSync/{mappingId} {
+        allow read, write: if false;
+      }
+
       // Drive thumbnail bytes ({connectionId}_{fileId}). Server-only: written and
       // read by the Admin SDK (thumbnail route, import, backfill) so the images
       // never ride along with video/document documents. See driveThumbnails.ts.

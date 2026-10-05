@@ -4,15 +4,15 @@ Keep secrets out of source control, logs, screenshots and shell history. Prefer 
 
 ## 1. Rotate `AI_CONNECTION_ENCRYPTION_KEY`
 
-`AI_CONNECTION_ENCRYPTION_KEY` encrypts user/system AI API keys and Google Drive refresh tokens. Do not replace it without keeping the old key until every stored credential has been re-encrypted.
+`AI_CONNECTION_ENCRYPTION_KEY` encrypts user/system AI API keys and Google Drive + Google Workspace refresh tokens. Do not replace it without keeping the old key until every stored credential has been re-encrypted.
 
 1. Back up Firestore. Generate a new key: `openssl rand -base64 32`.
 2. In the deployment environment set `AI_CONNECTION_ENCRYPTION_KEY` to the **new** key and `AI_CONNECTION_ENCRYPTION_KEY_PREVIOUS` to the **old** key. Redeploy so reads accept either key and new writes use the new one.
 3. Run the **dry run** (this is the default; nothing is written):
    `npx tsx --env-file=.env.local scripts/reencrypt.ts`
-   It prints found/ok/failed counts for `aiConnections`, `driveConnections` and `systemAiConnections`, and exits non-zero (writing nothing) if any credential cannot be decrypted.
+   It prints found/ok/failed counts for `aiConnections`, `driveConnections`, `googleConnections` and `systemAiConnections`, and exits non-zero (writing nothing) if any credential cannot be decrypted.
 4. When the dry run is clean, apply: `npx tsx --env-file=.env.local scripts/reencrypt.ts --apply`.
-5. Verify an AI connection and a Drive connection in the app, then remove `AI_CONNECTION_ENCRYPTION_KEY_PREVIOUS` and redeploy.
+5. Verify an AI connection, a Drive connection and a Google Workspace connection in the app, then remove `AI_CONNECTION_ENCRYPTION_KEY_PREVIOUS` and redeploy.
 
 Keep the old key in a temporary secure location until step 5 is done, then destroy it.
 
@@ -31,8 +31,10 @@ TTLs (`src/lib/server/driveSignedUrl.ts`): stream 6 h, download 10 min, thumbnai
 | Secret | How to rotate |
 |---|---|
 | `GOOGLE_DRIVE_OAUTH_STATE_SECRET` | Generate a new random value, redeploy. Only Drive connect flows in progress (10 min window) fail; users just retry. |
+| `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET` | Same as above, for the Google Workspace (Calendar/Tasks) connect flow. In-flight connects (10 min) fail; users retry. |
 | Firebase Admin key (`FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`) | Google Cloud Console → IAM → Service accounts → create a new key → update the env vars → redeploy → confirm API routes work → **delete the old key**. |
 | Google OAuth client secret (`GOOGLE_DRIVE_CLIENT_SECRET`) | Cloud Console → Credentials → OAuth client → add a new secret → update env → redeploy → disable the old secret. Existing refresh tokens keep working. |
+| Google Workspace OAuth client secret (`GOOGLE_WORKSPACE_CLIENT_SECRET`) | Same as above, on the "Study Lamp Workspace" OAuth client. Existing refresh tokens keep working. |
 | Facebook app secret | The current code does not read `FACEBOOK_APP_SECRET`. If it is in your env files, remove it. If you ever use it, reset it in Meta for Developers → App settings → Basic. |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | Generate a new Page token in Meta for Developers, update env, redeploy, revoke the old token. |
 | `YOUTUBE_API_KEY` (server) | Create a new key, restrict it to **YouTube Data API v3**, update env, redeploy, delete the old key. |
@@ -42,6 +44,10 @@ TTLs (`src/lib/server/driveSignedUrl.ts`): stream 6 h, download 10 min, thumbnai
 ## 4. Drive OAuth nonce cookie
 
 `sl_drive_nonce` is set by `/api/drive/auth/state`: `httpOnly`, `secure`, `SameSite=Lax`, path `/api/drive/auth`, 10-minute lifetime. The callback must receive the same nonce that is embedded in the signed `state`; this prevents a stolen or replayed `state` from linking someone else's Drive. The cookie is cleared by the callback.
+
+## 4b. Google Workspace OAuth nonce cookie
+
+`sl_google_nonce` works exactly like `sl_drive_nonce` (Section 4) for `/api/google/auth/*`. The Workspace `state` is signed with `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET` and the HMAC input is domain-separated with a `workspace.v1|` prefix, so a Drive state can never be replayed as a Workspace state (or vice versa) even if the two secrets were ever the same value.
 
 ## 5. Rate limiting caveat
 
@@ -53,8 +59,8 @@ TTLs (`src/lib/server/driveSignedUrl.ts`): stream 6 h, download 10 min, thumbnai
 
 ## 7. If secrets leaked
 
-1. **Rotate first**, in this order: Firebase Admin key, `AI_CONNECTION_ENCRYPTION_KEY` (section 1), `DRIVE_URL_SIGNING_SECRET`, `GOOGLE_DRIVE_OAUTH_STATE_SECRET`, Google OAuth client secret, API keys/tokens (YouTube, Facebook).
-2. If encrypted credentials or the encryption key could have leaked: ask users to remove and re-add AI keys, and revoke Drive access at https://myaccount.google.com/permissions (delete the app's `driveConnections` docs if needed).
+1. **Rotate first**, in this order: Firebase Admin key, `AI_CONNECTION_ENCRYPTION_KEY` (section 1), `DRIVE_URL_SIGNING_SECRET`, `GOOGLE_DRIVE_OAUTH_STATE_SECRET`, `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET`, Google OAuth client secrets, API keys/tokens (YouTube, Facebook).
+2. If encrypted credentials or the encryption key could have leaked: ask users to remove and re-add AI keys, and revoke Drive access at https://myaccount.google.com/permissions (delete the app's `driveConnections` and `googleConnections` docs if needed).
 3. Review Firestore usage (Console → Usage) and Cloud Audit Logs for unusual reads or writes; check AI provider dashboards for unexpected spend.
 4. Remove the leaked file from git **history** (for example `git filter-repo`), not just the latest commit. Rotating is still required, because the old values stay valid until you change them.
 5. Confirm `.gitignore` covers `.env*` (except `.env.example`).

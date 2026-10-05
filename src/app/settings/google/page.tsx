@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -8,48 +9,40 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import { getGoogleSyncStatus, toggleGoogleCalendar } from "@/lib/googleClient";
-import type { GoogleSyncStatus } from "@/types";
-import { CalendarRange, CheckCircle2 } from "lucide-react";
+import { disconnectGoogleConnection, listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
+import type { GoogleConnectionSummary, GoogleWorkspaceFeature } from "@/types";
+import { CalendarRange, CheckCircle2, ListTodo, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-const DEFAULT_COUNTS = {
-  synced: 0,
-  failed: 0,
-  remoteDeleted: 0,
-  noDate: 0,
-  orphaned: 0,
+const FEATURE_LABELS: Record<GoogleWorkspaceFeature, string> = {
+  calendar: "Calendar",
+  tasks: "Tasks",
 };
 
-export default function GoogleSettingsPage() {
+export default function GoogleWorkspaceSettingsPage() {
   return (
     <RequireAuth>
-      <GoogleSyncContent />
+      <GoogleWorkspaceContent />
     </RequireAuth>
   );
 }
 
-function GoogleSyncContent() {
+function GoogleWorkspaceContent() {
   const { user } = useAuth();
-  const [status, setStatus] = React.useState<GoogleSyncStatus>({
-    enabled: false,
-    calendarName: null,
-    lastSyncAt: null,
-    counts: DEFAULT_COUNTS,
-  });
+  const searchParams = useSearchParams();
+  const [connections, setConnections] = React.useState<GoogleConnectionSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [connecting, setConnecting] = React.useState(false);
+  const [connecting, setConnecting] = React.useState<GoogleWorkspaceFeature | "reconnect" | null>(null);
+  const [disconnectingId, setDisconnectingId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      setStatus(await getGoogleSyncStatus(idToken));
+      setConnections(await listGoogleConnections(idToken));
     } catch (error: any) {
-      toast.error(error?.message || "Failed to load Google sync status.");
+      toast.error(error?.message || "Failed to load your Google Workspace connections.");
     } finally {
       setLoading(false);
     }
@@ -57,127 +50,211 @@ function GoogleSyncContent() {
 
   React.useEffect(() => { load(); }, [load]);
 
-  async function handleConnect() {
+  // The OAuth callback redirects back here with ?connected=<email>, ?error or
+  // ?missing=<feature> — surface it once, then drop it from the URL.
+  React.useEffect(() => {
+    const connected = searchParams.get("connected");
+    const error = searchParams.get("error");
+    const missing = searchParams.get("missing");
+    if (connected) toast.success(`Connected ${connected}`);
+    if (missing) {
+      const words = missing
+        .split(",")
+        .map((feature) => FEATURE_LABELS[feature as GoogleWorkspaceFeature] ?? feature)
+        .join(" and ");
+      toast.error(`You did not allow ${words} access, so that feature stays off.`);
+    }
+    if (error) toast.error(error);
+    if (connected || error || missing) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("connected");
+      url.searchParams.delete("error");
+      url.searchParams.delete("missing");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [searchParams]);
+
+  /** Starts the flow for exactly one feature so access is granted incrementally. */
+  async function handleGrant(feature: GoogleWorkspaceFeature, label: string) {
     if (!user) return;
-    setConnecting(true);
+    setConnecting(feature);
     try {
       const idToken = await user.getIdToken();
-      const response = await fetch("/api/google/auth/state", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ features: ["calendar"] }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not start Google Calendar connection.");
-      }
-      window.location.assign(payload.url);
+      await startGoogleConnect(idToken, [feature]); // navigates away to Google
     } catch (error: any) {
-      setConnecting(false);
-      toast.error(error?.message || "Failed to start Google Calendar connection.");
+      toast.error(error?.message || `Failed to start connecting Google ${label}.`);
+      setConnecting(null);
     }
   }
 
-  async function handleToggle(nextEnabled: boolean) {
+  async function handleReconnect(connection: GoogleConnectionSummary) {
     if (!user) return;
-    const previous = status;
-    setStatus((current) => ({ ...current, enabled: nextEnabled }));
-    setSaving(true);
+    // Re-request everything this connection already has so a single consent
+    // fixes an "invalid" state without losing existing permissions.
+    const features = connection.grantedScopes.length > 0 ? connection.grantedScopes : (["calendar"] as GoogleWorkspaceFeature[]);
+    setConnecting("reconnect");
     try {
       const idToken = await user.getIdToken();
-      const result = await toggleGoogleCalendar(idToken, nextEnabled);
-      setStatus((current) => ({
-        ...current,
-        enabled: result.connection.enabled,
-        calendarName: current.calendarName || null,
-      }));
-      toast.success(nextEnabled ? "Google Calendar sync enabled." : "Google Calendar sync disabled.");
+      await startGoogleConnect(idToken, features); // navigates away to Google
     } catch (error: any) {
-      setStatus(previous);
-      toast.error(error?.message || "Failed to update Google sync.");
-    } finally {
-      setSaving(false);
+      toast.error(error?.message || "Failed to start reconnecting Google.");
+      setConnecting(null);
     }
   }
+
+  async function handleDisconnect(connection: GoogleConnectionSummary) {
+    if (!user) return;
+    if (
+      !confirm(
+        `Disconnect ${connection.googleEmail}? Study Lamp will stop syncing. Anything already created in Google stays there.`,
+      )
+    ) {
+      return;
+    }
+    setDisconnectingId(connection.id);
+    try {
+      const idToken = await user.getIdToken();
+      await disconnectGoogleConnection(idToken, connection.id);
+      setConnections((prev) => prev.filter((c) => c.id !== connection.id));
+      toast.success("Disconnected. Anything already in Google was left untouched.");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to disconnect.");
+    } finally {
+      setDisconnectingId(null);
+    }
+  }
+
+  const busy = connecting !== null;
 
   return (
     <AppShell>
       <div className="mx-auto max-w-3xl space-y-6">
         <div>
-          <h1 className="font-display text-2xl font-semibold">Google sync</h1>
+          <h1 className="font-display text-2xl font-semibold">Google Workspace</h1>
           <p className="text-sm text-muted-foreground">
-            Study Lamp can preview goals in a dedicated Google Calendar and ask for confirmation before any write is applied.
+            Connect Google Calendar and Tasks so Study Lamp can keep your study goals in step. It reads to check for
+            changes, and writes only after you confirm — nothing is changed automatically.
           </p>
         </div>
 
         <Card>
           <CardContent className="space-y-4 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="rounded-md bg-accent/10 p-2">
-                  <CalendarRange className="h-5 w-5 text-accent" />
-                </div>
-                <div>
-                  <h2 className="font-display text-base font-semibold">Calendar sync</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Keep a dedicated Study Lamp calendar and require a preview-confirm-apply flow before creating or updating events.
-                  </p>
-                </div>
+            <div className="flex items-start gap-2.5">
+              <div className="rounded-md bg-accent/10 p-2">
+                <CalendarRange className="h-5 w-5 text-accent" />
               </div>
-              <div className="flex items-center gap-3">
-                <Badge variant={status.enabled ? "success" : "secondary"}>{status.enabled ? "Enabled" : "Off"}</Badge>
-                <Switch checked={status.enabled} onCheckedChange={handleToggle} disabled={saving || loading || connecting} aria-label="Toggle Google Calendar sync" />
+              <div>
+                <h2 className="font-display text-base font-semibold">Connected accounts</h2>
+                <p className="text-sm text-muted-foreground">
+                  Study Lamp only uses the permissions you allow below. It never reads or edits your other calendars, and
+                  unchecking a permission on Google&apos;s screen simply means that feature stays off.
+                </p>
               </div>
             </div>
 
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={handleConnect} disabled={connecting || loading || saving}>
-                {connecting ? "Connecting…" : "Connect Google Calendar"}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => handleGrant("calendar", "Calendar")}
+                disabled={busy || loading}
+                loading={connecting === "calendar"}
+                loadingText="Redirecting…"
+              >
+                <CalendarRange className="h-4 w-4" /> Allow Calendar access
               </Button>
-              <Button variant="outline" onClick={load} disabled={loading || saving || connecting}>Refresh status</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => handleGrant("tasks", "Tasks")}
+                disabled={busy || loading}
+                loading={connecting === "tasks"}
+                loadingText="Redirecting…"
+              >
+                <ListTodo className="h-4 w-4" /> Allow Tasks access
+              </Button>
+              <Button size="sm" variant="ghost" className="gap-1.5" onClick={load} disabled={busy || loading}>
+                <RefreshCw className="h-4 w-4" /> Refresh
+              </Button>
             </div>
 
-            {loading ? (
+            {loading && (
               <div className="space-y-2">
-                <Skeleton className="h-5 w-28" />
-                <Skeleton className="h-4 w-full" />
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="rounded-md border border-border bg-secondary/20 p-3 text-sm text-muted-foreground">
-                  {status.enabled ? (
-                    <div className="flex items-center gap-2 text-foreground">
-                      <CheckCircle2 className="h-4 w-4 text-success" />
-                      <span>
-                        {status.calendarName ? `Connected to “${status.calendarName}”.` : "Google Calendar sync is enabled."}
-                      </span>
-                    </div>
-                  ) : (
-                    <span>Google Calendar sync is currently off. Connect your Google account and then enable the dedicated Study Lamp calendar.</span>
-                  )}
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-md border border-border p-3">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Last sync</div>
-                    <div className="mt-1 text-sm font-medium">
-                      {status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : "Not synced yet"}
-                    </div>
-                  </div>
-                  <div className="rounded-md border border-border p-3">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Synced</div>
-                    <div className="mt-1 text-sm font-medium">{status.counts.synced}</div>
-                  </div>
-                  <div className="rounded-md border border-border p-3">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Conflicts</div>
-                    <div className="mt-1 text-sm font-medium">{status.counts.failed}</div>
-                  </div>
-                </div>
+                <Skeleton className="h-14 w-full" />
               </div>
             )}
+
+            {!loading && connections.length === 0 && (
+              <div className="space-y-1 rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">No Google account connected yet</p>
+                <p>Allow Calendar or Tasks access above to get started.</p>
+              </div>
+            )}
+
+            {!loading && connections.map((connection) => (
+              <div key={connection.id} className="space-y-3 rounded-md border border-border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{connection.googleEmail}</span>
+                      {connection.status === "invalid" ? (
+                        <Badge variant="destructive">Needs reconnect</Badge>
+                      ) : (
+                        <Badge variant="success">Active</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {connection.lastUsedAt ? `Last used ${new Date(connection.lastUsedAt).toLocaleString()}` : "Not used yet"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {connection.status === "invalid" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => handleReconnect(connection)}
+                        disabled={busy}
+                        loading={connecting === "reconnect"}
+                      >
+                        <RefreshCw className="h-4 w-4" /> Reconnect
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDisconnect(connection)}
+                      aria-label={`Disconnect ${connection.googleEmail}`}
+                      loading={disconnectingId === connection.id}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {(["calendar", "tasks"] as const).map((feature) => {
+                    const granted = connection.grantedScopes.includes(feature);
+                    return (
+                      <span
+                        key={feature}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-xs"
+                      >
+                        {granted ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                        ) : (
+                          <Plus className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
+                        <span className={granted ? "text-foreground" : "text-muted-foreground"}>
+                          {FEATURE_LABELS[feature]} {granted ? "allowed" : "not allowed"}
+                        </span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </div>

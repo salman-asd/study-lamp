@@ -47,14 +47,13 @@ export const PATCH = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, p
 }, { scope: "googleSync", preset: "googleSync", limit: 20, tooManyMessage: "Too many connection updates. Please slow down." });
 
 export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, params }) => {
-  if (params.id !== "calendar") {
-    return NextResponse.json({ error: "Unsupported Google connection id." }, { status: 400 });
-  }
-
+  // Any stored connection id is valid here. Deleting only removes Study Lamp's
+  // stored token (and best-effort revokes it at Google) — remote events and
+  // tasks are never touched.
   const deleted = await deleteGoogleConnection(uid, params.id);
   if (!deleted) {
     return NextResponse.json({ error: "Connection not found." }, { status: 404 });
   }
 
   return NextResponse.json({ ok: true });
-}, { scope: "googleSync", preset: "googleSync", limit: 20, tooManyMessage: "Too many connection deletions. Please slow down." });
+}, { scope: "google:connections", preset: "authSensitive" });

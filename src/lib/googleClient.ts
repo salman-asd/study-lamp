@@ -1,4 +1,4 @@
-﻿import type { GoogleSyncStatus } from "@/types";
+﻿import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
 
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
@@ -11,6 +11,38 @@ function authHeaders(idToken: string, withJson = false): HeadersInit {
     Authorization: `Bearer ${idToken}`,
     ...(withJson ? { "Content-Type": "application/json" } : {}),
   };
+}
+
+/** W2: the connected Google Workspace accounts (safe summaries only). */
+export async function listGoogleConnections(idToken: string): Promise<GoogleConnectionSummary[]> {
+  const res = await fetch("/api/google/connections", { headers: authHeaders(idToken) });
+  const data = await parseOrThrow(res);
+  return data.connections;
+}
+
+/** W2: starts the OAuth flow for the requested features and navigates the
+ *  whole page to the server-built Google auth URL. */
+export async function startGoogleConnect(idToken: string, features: GoogleWorkspaceFeature[]): Promise<void> {
+  const res = await fetch("/api/google/auth/state", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ features }),
+  });
+  const data = await parseOrThrow(res);
+  if (typeof data.url !== "string" || !data.url.startsWith("https://accounts.google.com/")) {
+    throw new Error("Google returned an invalid authorization URL.");
+  }
+  window.location.assign(data.url);
+}
+
+/** W2: disconnects a Workspace account. The stored token is deleted and
+ *  revoked at Google; nothing in Calendar or Tasks is deleted. */
+export async function disconnectGoogleConnection(idToken: string, connectionId: string): Promise<void> {
+  const res = await fetch(`/api/google/connections/${encodeURIComponent(connectionId)}`, {
+    method: "DELETE",
+    headers: authHeaders(idToken),
+  });
+  await parseOrThrow(res);
 }
 
 export async function getGoogleSyncStatus(idToken: string): Promise<GoogleSyncStatus> {

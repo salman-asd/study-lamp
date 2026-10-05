@@ -1,4 +1,12 @@
 import crypto from "crypto";
+import {
+  buildGoogleAuthUrl,
+  exchangeCode,
+  fetchGoogleAccountEmail,
+  refreshToken,
+  revoke,
+  type GoogleOAuthClient,
+} from "@/lib/server/googleOAuth";
 
 /**
  * Server-only. Raw REST wrapper around Google's OAuth2 + Drive v3 APIs —
@@ -25,10 +33,7 @@ import crypto from "crypto";
  */
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
-const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
-const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";
+const DRIVE_REDIRECT_PATH = "/api/drive/auth/callback";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
 const DRIVE_ID_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
@@ -70,12 +75,17 @@ export function isDriveConfigured(): boolean {
   );
 }
 
+/** The Drive OAuth client config, passed to the generic primitives. */
+function driveClient(): GoogleOAuthClient {
+  return { clientId: env("GOOGLE_DRIVE_CLIENT_ID"), clientSecret: env("GOOGLE_DRIVE_CLIENT_SECRET"), redirectPath: DRIVE_REDIRECT_PATH };
+}
+
 /** Builds the redirect_uri from the request's own origin rather than a
  *  hardcoded env var, so this works unchanged across localhost/preview/prod
  *  deployments — it only has to match one of the "Authorized redirect URIs"
  *  configured on the OAuth client in Google Cloud Console. */
 export function buildRedirectUri(origin: string): string {
-  return `${origin}/api/drive/auth/callback`;
+  return `${origin}${DRIVE_REDIRECT_PATH}`;
 }
 
 // ── OAuth "state" — binds the redirect round-trip to the signed-in uid ─────
@@ -126,19 +136,14 @@ function sameText(left: string, right: string): boolean {
 }
 
 export function buildAuthUrl(origin: string, state: string): string {
-  const params = new URLSearchParams({
-    client_id: env("GOOGLE_DRIVE_CLIENT_ID"),
-    redirect_uri: buildRedirectUri(origin),
-    response_type: "code",
+  return buildGoogleAuthUrl(origin, state, driveClient(), {
     scope: DRIVE_SCOPE,
-    access_type: "offline",
+    accessType: "offline",
     // Forces Google to re-issue a refresh_token even for a user who
     // connected before — without this, re-connecting after a disconnect
     // would silently come back with no refresh_token at all.
     prompt: "consent",
-    state,
   });
-  return `${AUTH_ENDPOINT}?${params.toString()}`;
 }
 
 interface TokenResponse {
@@ -150,53 +155,25 @@ interface TokenResponse {
 }
 
 export async function exchangeCodeForTokens(code: string, origin: string): Promise<TokenResponse> {
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: env("GOOGLE_DRIVE_CLIENT_ID"),
-      client_secret: env("GOOGLE_DRIVE_CLIENT_SECRET"),
-      redirect_uri: buildRedirectUri(origin),
-      grant_type: "authorization_code",
-    }),
-  });
-  if (!res.ok) throw new Error(`Google token exchange failed (${res.status}).`);
-  return res.json();
+  const tokens = await exchangeCode(code, origin, driveClient());
+  // Drive's callers rely on `scope` being present (it is recorded on the
+  // connection); default to the requested DRIVE_SCOPE if Google omits it.
+  return { ...tokens, scope: tokens.scope ?? DRIVE_SCOPE };
 }
 
 /** Returns a fresh short-lived access token for a stored refresh token.
  *  Never persisted — callers use it immediately for one or a few Drive API
  *  calls and then discard it. */
-export async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiresIn: number }> {
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: env("GOOGLE_DRIVE_CLIENT_ID"),
-      client_secret: env("GOOGLE_DRIVE_CLIENT_SECRET"),
-      grant_type: "refresh_token",
-    }),
-  });
-  if (!res.ok) {
-    const err: any = new Error(`Google token refresh failed (${res.status}).`);
-    err.driveAuthInvalid = res.status === 400 || res.status === 401;
-    throw err;
-  }
-  const data = (await res.json()) as TokenResponse;
-  return { accessToken: data.access_token, expiresIn: data.expires_in };
+export async function refreshAccessToken(refreshTokenValue: string): Promise<{ accessToken: string; expiresIn: number }> {
+  return refreshToken(refreshTokenValue, driveClient());
 }
 
 export async function revokeToken(token: string): Promise<void> {
-  await fetch(`${REVOKE_ENDPOINT}?token=${encodeURIComponent(token)}`, { method: "POST" }).catch(() => {});
+  return revoke(token);
 }
 
 export async function getGoogleAccountEmail(accessToken: string): Promise<string> {
-  const res = await fetch(USERINFO_ENDPOINT, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) throw new Error("Unable to read the connected Google account's email.");
-  const data = await res.json();
-  return data.email as string;
+  return fetchGoogleAccountEmail(accessToken);
 }
 
 // ── Drive v3 file operations ────────────────────────────────────────────
