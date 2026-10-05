@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { getConnectionRaw } from "@/lib/server/aiConnections";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { fetchModelsForProvider } from "@/lib/server/aiModels";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
@@ -19,12 +19,7 @@ interface RouteParams {
 // If the caller is rotating their key (typing a new one before saving),
 // pass it in the body as `apiKey` and it's used instead of the stored one —
 // same as save behavior already does for a fresh key.
-export async function POST(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, params }) => {
   const connection = await getConnectionRaw(uid, params.id);
   if (!connection) {
     return NextResponse.json({ error: "Connection not found." }, { status: 404 });
@@ -57,4 +52,4 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     { models: result.models },
     { headers: { "Cache-Control": "private, no-store" } }
   );
-}
+});

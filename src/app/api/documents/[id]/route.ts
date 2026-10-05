@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
@@ -20,13 +19,7 @@ const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * subcollections when the parent is deleted, so a plain client deleteDoc would
  * leave them behind as orphans. The Drive file itself is never touched.
  */
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "document-delete", limit: 60 })) {
-    return NextResponse.json({ error: "Too many requests. Please slow down." }, { status: 429 });
-  }
-
+export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, params }) => {
   const documentId = params.id;
   if (!DOCUMENT_ID_PATTERN.test(documentId)) {
     return NextResponse.json({ error: "Invalid document id." }, { status: 400 });
@@ -53,4 +46,4 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     console.error("Document delete failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Couldn't remove this document." }, { status: 500 });
   }
-}
+}, { scope: "document-delete", limit: 60, tooManyMessage: "Too many requests. Please slow down.", retryAfterSeconds: null });

@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { buildRoadmapStepsPrompt, withResponseLanguage } from "@/lib/ai/aiService";
 import type { RoadmapLevel } from "@/types";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // No AI call here — this just returns the exact prompt text the generate
 // route would send, so a user can copy it, run it in a different AI tool,
@@ -10,10 +10,7 @@ import { resolveAiLanguage } from "@/lib/server/aiPreferences";
 // Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: any;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
 
@@ -29,4 +26,4 @@ export async function POST(req: NextRequest) {
 
   const prompt = withResponseLanguage(buildRoadmapStepsPrompt({ categoryName, level, subtopics }), language);
   return NextResponse.json({ prompt }, { headers: { "Cache-Control": "private, no-store" } });
-}
+});

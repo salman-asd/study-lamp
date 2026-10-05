@@ -1,8 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { getFileMetadata } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
 import {
   countLegacyThumbnails,
   countUnattemptedThumbnails,
@@ -15,6 +13,7 @@ import {
   saveDriveThumbnail,
   type DriveThumbnailTarget,
 } from "@/lib/server/driveThumbnails";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,13 +31,7 @@ const CONCURRENCY = 5;
  * Each call handles up to BATCH_SIZE items; `remaining` tells the caller
  * (Settings -> Google Drive) whether to call again.
  */
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:thumbnail-backfill" })) {
-    return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-  }
-
+export const POST = withAuthedRoute(async ({ uid }) => {
   try {
     // One-time per user (skipped via users/{uid}.driveThumbsNormalizedAt): make items with a MISSING
     // thumbnailAttemptedAt field visible to the `== null` queries below.
@@ -99,4 +92,4 @@ export async function POST(req: NextRequest) {
     console.error("Drive thumbnail backfill failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Couldn't refresh Drive thumbnails." }, { status: 500 });
   }
-}
+}, { scope: "drive:thumbnail-backfill" });

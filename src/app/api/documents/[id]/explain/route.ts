@@ -1,27 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { getPersonalDocument } from "@/lib/server/documentContent";
-import { AiServiceError, generateDocumentPageExplanation, type AiErrorCode } from "@/lib/ai/aiService";
+import { generateDocumentPageExplanation } from "@/lib/ai/aiService";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
+import { aiErrorResponse, withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
 }
 
 const MAX_PAGE_TEXT_CHARS = 8_000;
-const STATUS_BY_CODE: Record<AiErrorCode, number> = {
-  auth: 400, rate_limit: 429, invalid_request: 502, blocked: 422,
-  timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
-};
-
 // Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, params }) => {
   const document = await getPersonalDocument(uid, params.id);
   if (!document) return NextResponse.json({ error: "Document not found." }, { status: 404 });
   if (document.fileType !== "pdf") return NextResponse.json({ error: "Page explanations are available for PDFs only." }, { status: 422 });
@@ -58,10 +50,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     ));
     return NextResponse.json({ explanation }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    if (error instanceof AiServiceError) {
-      return NextResponse.json({ error: error.message }, { status: STATUS_BY_CODE[error.code] });
-    }
-    console.error("Unexpected error explaining a document page", error);
-    return NextResponse.json({ error: "Couldn't explain this page." }, { status: 500 });
+    return aiErrorResponse(error, { fallbackMessage: "Couldn't explain this page.", logLabel: "Unexpected error explaining a document page" });
   }
-}
+});

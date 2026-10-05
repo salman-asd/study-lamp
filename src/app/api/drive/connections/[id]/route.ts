@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { deleteDriveConnection } from "@/lib/server/driveConnections";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
@@ -11,10 +10,7 @@ interface RouteParams {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:connections-delete" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
+export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, params }) => {
   if (!isValidDriveConnectionId(params.id)) return NextResponse.json({ error: "A valid connectionId is required." }, { status: 400 });
 
   const deleted = await deleteDriveConnection(uid, params.id);
@@ -23,4 +19,4 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
   // Deliberately does not touch already-imported videos/documents that
   // reference this connection — see deleteDriveConnection's doc comment.
   return NextResponse.json({ ok: true });
-}
+}, { scope: "drive:connections-delete" });

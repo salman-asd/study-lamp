@@ -1,18 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { getOrCreateBackupFolder, listBackupFiles } from "@/lib/server/googleDrive";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:backup-list" })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-
+export const GET = withAuthedRoute(async ({ uid, req }) => {
   const connectionId = req.nextUrl.searchParams.get("connectionId");
   if (!isValidDriveConnectionId(connectionId)) return NextResponse.json({ error: "A valid connectionId is required." }, { status: 400 });
 
@@ -29,4 +24,4 @@ export async function GET(req: NextRequest) {
     console.error("Listing Drive backups failed", err);
     return NextResponse.json({ error: "Couldn't list backups from Drive." }, { status: 502 });
   }
-}
+}, { scope: "drive:backup-list" });

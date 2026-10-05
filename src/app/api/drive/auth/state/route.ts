@@ -1,8 +1,7 @@
 import crypto from "crypto";
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { buildAuthUrl, signDriveState, isDriveConfigured } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // Step 1 of the OAuth flow (Phase 13): the browser calls this (authenticated,
 // normal fetch with an Authorization header) to get a short-lived signed
@@ -11,11 +10,7 @@ import { checkRateLimit } from "@/lib/server/rateLimit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:auth-state", limit: 10 })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   if (!isDriveConfigured()) {
     return NextResponse.json(
       { error: "Google Drive isn't configured on this deployment yet (missing GOOGLE_DRIVE_CLIENT_ID/SECRET)." },
@@ -34,4 +29,4 @@ export async function POST(req: NextRequest) {
     maxAge: 600,
   });
   return response;
-}
+}, { scope: "drive:auth-state", limit: 10 });

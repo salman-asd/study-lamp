@@ -1,30 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { AiServiceError, generateAiText } from "@/lib/ai/aiService";
 import { AI_OPTIONS } from "@/lib/ai/generateOptions";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
-
-const STATUS_BY_CODE: Record<string, number> = {
-  auth: 400,
-  rate_limit: 429,
-  invalid_request: 502,
-  blocked: 422,
-  timeout: 504,
-  network: 502,
-  server_error: 502,
-  unsupported_provider: 400,
-  unknown: 500,
-};
+import { aiErrorResponse, withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: any;
   try {
     body = await req.json();
@@ -68,10 +53,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ suggestion }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
-    if (err instanceof AiServiceError) {
-      return NextResponse.json({ error: err.message }, { status: STATUS_BY_CODE[err.code] ?? 500 });
-    }
-    console.error("Failed to suggest category name", err);
-    return NextResponse.json({ error: "Something went wrong creating a category suggestion." }, { status: 500 });
+    return aiErrorResponse(err, { fallbackMessage: "Something went wrong creating a category suggestion.", logLabel: "Failed to suggest category name" });
   }
-}
+});

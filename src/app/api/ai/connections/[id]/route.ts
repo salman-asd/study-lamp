@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { deleteConnection, updateConnection, validateUpdateInput } from "@/lib/server/aiConnections";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 interface RouteParams {
   params: { id: string };
@@ -13,12 +13,7 @@ interface RouteParams {
 // from the verified token, never from the request, and every Firestore path
 // in aiConnections.ts is built as users/{uid}/aiConnections/{id} — there is
 // no code path where a caller's uid can reach another user's document.
-export async function PATCH(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const PATCH = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, params }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -41,15 +36,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     console.error("Failed to update AI connection", err);
     return NextResponse.json({ error: "Failed to update connection." }, { status: 500 });
   }
-}
+});
 
 // DELETE /api/ai/connections/:id
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, params }) => {
   try {
     const deleted = await deleteConnection(uid, params.id);
     if (!deleted) {
@@ -60,4 +50,4 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     console.error("Failed to delete AI connection", err);
     return NextResponse.json({ error: "Failed to delete connection." }, { status: 500 });
   }
-}
+});

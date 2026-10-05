@@ -1,5 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import {
   isSupportedUploadMimeType,
@@ -8,7 +7,7 @@ import {
   sanitizeDriveFileName,
   startResumableUpload,
 } from "@/lib/server/googleDrive";
-import { checkRateLimit } from "@/lib/server/rateLimit";
+import { withAuthedRoute, readJsonObject } from "@/lib/server/routeHelpers";
 
 // Step 1 of "Upload to Drive" (Phase 15). Returns a Drive resumable-upload
 // session URL; the browser then PUTs the file bytes straight to Google,
@@ -19,17 +18,10 @@ import { checkRateLimit } from "@/lib/server/rateLimit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!checkRateLimit(uid, { scope: "drive:upload-session", limit: 10 })) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "60" } });
-
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
+export const POST = withAuthedRoute(async ({ uid, req }) => {
+  const parsedBody = await readJsonObject(req);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.body;
 
   const connectionId = typeof body.connectionId === "string" ? body.connectionId : "";
   const name = typeof body.name === "string" ? sanitizeDriveFileName(body.name) : "";
@@ -57,4 +49,4 @@ export async function POST(req: NextRequest) {
     console.error("Failed to start Drive upload session", err);
     return NextResponse.json({ error: "Couldn't start the upload to Drive." }, { status: 502 });
   }
-}
+}, { scope: "drive:upload-session", limit: 10 });

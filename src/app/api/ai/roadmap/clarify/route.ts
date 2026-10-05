@@ -1,21 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { withAiConnection } from "@/lib/server/resolveAiConnection";
 import { AiServiceError, generateTopicClarification, generateFocusClarification } from "@/lib/ai/aiService";
 import { resolveAiLanguage } from "@/lib/server/aiPreferences";
-
-const STATUS_BY_CODE: Record<string, number> = {
-  auth: 400, rate_limit: 429, invalid_request: 502, blocked: 422,
-  timeout: 504, network: 502, server_error: 502, unsupported_provider: 400, unknown: 500,
-};
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // Calls an AI model; adjust to the deployment plan limit.
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: any;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
 
@@ -40,4 +32,4 @@ export async function POST(req: NextRequest) {
     if (err instanceof AiServiceError) console.error(`Clarify AI error [${err.code}]`);
     return NextResponse.json({ ambiguous: false });
   }
-}
+});

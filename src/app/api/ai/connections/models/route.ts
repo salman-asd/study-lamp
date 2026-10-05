@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { fetchModelsForProvider } from "@/lib/server/aiModels";
 
 import type { AiProvider } from "@/types";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 // POST /api/ai/connections/models — used when adding a *new* connection
 // (or rotating the key on an existing one before saving), where the caller
@@ -12,12 +12,7 @@ import type { AiProvider } from "@/types";
 // For refreshing an *already-saved* connection's models without having the
 // key on hand, see /api/ai/connections/[id]/models instead, which decrypts
 // the stored key server-side.
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   try {
     const body = await req.json();
     const provider = body?.provider as AiProvider;
@@ -43,4 +38,4 @@ export async function POST(req: NextRequest) {
     console.error("Fetch AI models error:", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "Unable to fetch AI models." }, { status: 500 });
   }
-}
+});

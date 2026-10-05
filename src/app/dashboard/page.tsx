@@ -22,8 +22,11 @@ import {
 } from "@/lib/dashboardUtils";
 import { MotivationBanner } from "@/components/dashboard/MotivationBanner";
 import { InterestsBanner } from "@/components/dashboard/InterestsBanner";
+import { GetStartedSection } from "@/components/dashboard/GetStartedSection";
+import { ActiveRoadmapSection } from "@/components/dashboard/ActiveRoadmapSection";
+import { ActiveGoalsSection } from "@/components/dashboard/ActiveGoalsSection";
 import { Sparkline, BarChart, DonutChart } from "@/components/ui/charts";
-import { computeDailyPace, describeDueDate, getGoalLinkedPlaylists, getGoalLinkedVideos } from "@/lib/goalUtils";
+import { computeDailyPace, getGoalLinkedPlaylists, getGoalLinkedVideos } from "@/lib/goalUtils";
 import { TourChip } from "@/components/tour/TourChip";
 import { getDueReviews } from "@/lib/reviewUtils";
 import { trackLearningEvent } from "@/lib/analytics";
@@ -37,11 +40,10 @@ import { VideoCard } from "@/components/video/VideoCard";
 import { QuickAddVideoDialog } from "@/components/video/QuickAddVideoDialog";
 import { toggleFavoriteAny, toggleWatchLaterAny, setPriorityAny, setWatchedAny, updateVideoStateOptimistically } from "@/lib/videoActions";
 import type { Goal, LearningRoadmap, PersonalPlaylist, PriorityLevel, QuizAttempt, VideoWithState } from "@/types";
-import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import {
-  Clock3, ListVideo, Plus, Star, Flag, BookOpen, PlayCircle, CheckCircle2, Sparkles, Flame, Target, TrendingUp, BookOpenCheck,
+  Clock3, ListVideo, Plus, Star, Flag, BookOpen, PlayCircle, CheckCircle2, Sparkles, Flame, TrendingUp,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -413,123 +415,13 @@ function DashboardContent() {
         {/* Phase D: get started (brand-new user).
             A first-time user gets ONE clear next action instead of a wall of
             empty charts and zeros. */}
-        {brandNew && (
-          <section className="rounded-2xl border-dashed border-accent/50 bg-accent/5 p-6" data-tour="dash-getstarted">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-accent">Welcome to Study Lamp</p>
-                <h2 className="font-display text-xl font-semibold">Three steps and this dashboard fills itself in.</h2>
-                <p className="max-w-2xl text-sm text-muted-foreground">
-                  Pick what you want to learn, generate a roadmap, then set a goal with a deadline. Everything here —
-                  pace, recommendations, charts — is built from those.
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button asChild><Link href="/onboarding">Choose interests</Link></Button>
-                <Button asChild variant="outline"><Link href="/playlists/import">Add videos</Link></Button>
-              </div>
-            </div>
-
-            <ol className="mt-5 grid gap-3 sm:grid-cols-3">
-              {[
-                { n: 1, title: "Pick your interests", detail: "Choose the topics you actually want to learn.", href: "/onboarding", cta: "Set interests" },
-                { n: 2, title: "Generate a roadmap", detail: "Get an ordered path of steps for a topic.", href: "/roadmap", cta: "Open roadmap" },
-                { n: 3, title: "Set a goal", detail: "Give a step a deadline so pace tracking kicks in.", href: "/goals", cta: "Open goals" },
-              ].map((item) => (
-                <li key={item.n} className="rounded-lg border-border bg-background/60 p-3">
-                  <span className="mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-xs font-semibold text-accent">
-                    {item.n}
-                  </span>
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{item.detail}</p>
-                  <Button asChild size="sm" variant="link" className="mt-1 h-auto p-0 text-xs">
-                    <Link href={item.href}>{item.cta} →</Link>
-                  </Button>
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
+        {brandNew && <GetStartedSection />}
 
         {/* Phase D: active roadmap — current step + completion. */}
-        {focusRows.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-                <BookOpenCheck className="h-4 w-4 text-accent" /> Your roadmap
-              </h2>
-              <Link href="/roadmap" className="text-sm text-muted-foreground hover:text-foreground">View all</Link>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {focusRows.slice(0, 3).map((row) => (
-                <div key={row.id} className="space-y-2.5 rounded-xl border-border bg-card p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    {/* row.categoryName is resolved from the real category doc.
-                        This previously rendered interest.categoryId — a raw
-                        Firestore id — which is the "wrong title" bug. */}
-                    <p className="font-medium leading-tight">{row.categoryName}</p>
-                    <Badge variant="secondary" className="shrink-0 capitalize">{row.level}</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Step {row.currentStepIndex + 1} of {row.stepCount} — <span className="text-foreground">{row.currentStepTitle}</span>
-                  </p>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>Roadmap progress</span>
-                      <span>{row.progressPercent}%</span>
-                    </div>
-                    <Progress value={row.progressPercent} className="h-1.5" />
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    {row.completedVideos} completed video{row.completedVideos === 1 ? "" : "s"} in this topic
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        {focusRows.length > 0 && <ActiveRoadmapSection rows={focusRows} />}
 
         {/* Phase D: goals with pace status. */}
-        {goalRows.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-                <Target className="h-4 w-4 text-accent" /> Active goals
-              </h2>
-              <Link href="/goals" className="text-sm text-muted-foreground hover:text-foreground">View all</Link>
-            </div>
-            <div className="space-y-2">
-              {goalRows.slice(0, 4).map((goal) => {
-                const due = describeDueDate(goal.targetDate, false);
-                const tone = goal.status === "overdue" ? "text-destructive" : goal.status === "behind" ? "text-amber-600" : "text-emerald-600";
-                const label = goal.status === "ahead" ? "Ahead" : goal.status === "on-track" ? "On track" : goal.status === "behind" ? "Behind" : "Overdue";
-                return (
-                  <Link
-                    key={goal.id}
-                    href={`/goals?goal=${goal.id}`}
-                    className="block rounded-xl border-border bg-card p-3.5 transition-colors hover:border-accent/50"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{goal.title}</span>
-                      <span className="flex items-center gap-2 text-xs">
-                        {due.label && <Badge variant="outline">{due.label}</Badge>}
-                        <span className={cn("font-medium", tone)}>
-                          {label}{goal.videosPerDayNeeded > 0 ? ` · ${goal.videosPerDayNeeded}/day` : ""}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="mt-2 space-y-1">
-                      <Progress value={goal.progressPercent} className="h-1.5" />
-                      <p className="text-[11px] text-muted-foreground">
-                        {goal.watched} of {goal.total} watched{goal.videosRemaining > 0 ? ` · ${goal.videosRemaining} to go` : " · complete"}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        )}
+        {goalRows.length > 0 && <ActiveGoalsSection rows={goalRows} />}
 
         {/* Phase D: charts. Real data only — each renders only when it has
             something to say, so a new user never sees an empty axis. */}
