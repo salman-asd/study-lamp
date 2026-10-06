@@ -566,6 +566,8 @@ export interface GoogleSyncCounts {
   synced: number;
   failed: number;
   remoteDeleted: number;
+  /** Goals the user chose to stop syncing after their Google event was deleted. */
+  unlinked: number;
   noDate: number;
   orphaned: number;
 }
@@ -594,6 +596,7 @@ export interface GoogleConnectionSummary {
 
 export interface GoogleSyncStatus {
   enabled: boolean;
+  connectionId?: string | null;
   calendarName: string | null;
   lastSyncAt: string | null;
   counts: GoogleSyncCounts;

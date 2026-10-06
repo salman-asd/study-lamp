@@ -1,4 +1,4 @@
-﻿import admin from "firebase-admin";
+import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
 import { CalendarDeletedError, createCalendarClient, ensureStudyLampCalendar } from "@/lib/server/googleCalendar";
@@ -6,12 +6,15 @@ import { refreshWorkspaceAccessToken, revokeWorkspaceToken } from "@/lib/server/
 import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
 import { type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
+import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
+import { computeSyncCounts } from "@/lib/server/googleSyncMapping";
 import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus } from "@/types";
 
 const DEFAULT_COUNTS: GoogleSyncCounts = {
   synced: 0,
   failed: 0,
   remoteDeleted: 0,
+  unlinked: 0,
   noDate: 0,
   orphaned: 0,
 };
@@ -364,10 +367,24 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
   } catch (error) {
     if (!(error instanceof GoogleConnectionError)) throw error;
   }
+  // Counts come from our own mapping and goal docs only: no Google call, no write.
+  let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  if (connection?.enabled && connection.calendarId) {
+    const [mappings, goalSnap] = await Promise.all([
+      listGoalSyncMappings(uid),
+      adminDb.collection("users").doc(uid).collection("goals").select("targetDate").get(),
+    ]);
+    counts = computeSyncCounts({
+      mappings,
+      goals: goalSnap.docs.map((doc) => ({ id: doc.id, targetDate: typeof doc.data().targetDate === "string" ? doc.data().targetDate : null })),
+      calendarId: connection.calendarId,
+    });
+  }
   return {
     enabled: Boolean(connection?.enabled),
+    connectionId: connection?.id ?? null,
     calendarName: connection?.calendarName ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
-    counts: connection?.counts ?? { ...DEFAULT_COUNTS },
+    counts,
   };
 }

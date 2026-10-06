@@ -1,10 +1,12 @@
-﻿import admin from "firebase-admin";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { getAccessTokenForConnection, getGoogleCalendarConnection, resolveCalendarConnectionId, touchCalendarLastCheck } from "@/lib/server/googleConnections";
 import { applyCalendarSync, PlanAlreadyAppliedError, type CalendarApplyDeps, type SyncResolution } from "@/lib/server/goalSyncApply";
 import type { LiveCalendarEvent } from "@/lib/server/goalSyncPlan";
 import { listGoalSyncMappings, recordCalendarMappingError, saveCalendarMapping } from "@/lib/server/googleSyncState";
+import { createGoalWithMapping, deleteGoalWithMapping, pullGoalFieldsAtomic } from "@/lib/server/goalSyncStore";
+import { ignoreRemote, listIgnoredRemoteIds } from "@/lib/server/googleIgnored";
+import { saveSyncLogEntry } from "@/lib/server/googleSyncLog";
 import { createCalendarClient } from "@/lib/server/googleCalendar";
 import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 import { PlanTokenVerificationError, verifyPlanToken } from "@/lib/server/planToken";
@@ -15,19 +17,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const RESOLUTIONS: readonly SyncResolution[] = ["use_study_lamp", "use_google", "skip"];
+const RESOLUTIONS: readonly SyncResolution[] = ["use_study_lamp", "use_google", "skip", "unlink", "recreate", "delete_goal", "ignore"];
+/** `<itemId>` (64 hex) or `<itemId>:<field>` for one field of a conflict. */
+const RESOLUTION_KEY = /^[a-f0-9]{64}(:[A-Za-z]{1,30})?$/;
+const MAX_LIST = 500;
 
 function readResolutions(value: unknown): Record<string, SyncResolution> {
   const result: Record<string, SyncResolution> = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return result;
-  for (const [itemId, choice] of Object.entries(value)) {
-    if (typeof choice === "string" && (RESOLUTIONS as readonly string[]).includes(choice)) result[itemId] = choice as SyncResolution;
+  for (const [key, choice] of Object.entries(value).slice(0, MAX_LIST)) {
+    if (!RESOLUTION_KEY.test(key)) continue;
+    if (typeof choice === "string" && (RESOLUTIONS as readonly string[]).includes(choice)) result[key] = choice as SyncResolution;
   }
   return result;
 }
 
 function readStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").slice(0, MAX_LIST) : [];
 }
 
 /**
@@ -85,6 +91,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
         return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal);
       },
       listMappings: () => listGoalSyncMappings(uid),
+      listIgnoredRemoteIds: () => listIgnoredRemoteIds(uid, "calendar"),
       async listLiveEvents() {
         const listed = await client.listEvents(calendarId, { showDeleted: true });
         const events = listed.items.filter((event): event is LiveCalendarEvent => typeof event.id === "string" && event.id.length > 0);
@@ -93,22 +100,26 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
       saveMapping: (goalId, input) =>
         saveCalendarMapping(uid, goalId, {
           titleSnapshot: input.titleSnapshot,
-          calendar: { connectionId, calendarId, eventId: input.eventId, remoteEtag: input.remoteEtag, base: input.base },
+          calendar: { connectionId, calendarId, eventId: input.eventId, remoteEtag: input.remoteEtag, base: input.base, status: input.status },
         }),
       recordError: (goalId, code) => recordCalendarMappingError(uid, goalId, code),
-      pullGoalFields: (goalId, expected, updates) =>
-        adminDb.runTransaction(async (tx) => {
-          const ref = goalsRef.doc(goalId);
-          const snap = await tx.get(ref);
-          if (!snap.exists) return "missing" as const;
-          const current = snap.data() ?? {};
-          const currentTitle = typeof current.title === "string" ? current.title : "";
-          const currentDate = typeof current.targetDate === "string" ? current.targetDate : null;
-          // The goal must still be exactly what apply just read; otherwise the user changed it meanwhile.
-          if (currentTitle !== expected.title || currentDate !== expected.targetDate) return "changed" as const;
-          tx.update(ref, { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-          return "ok" as const;
+      pullGoalFields: (goalId, expected, updates, mapping) =>
+        pullGoalFieldsAtomic(uid, goalId, expected, updates, { connectionId, calendarId, ...mapping }),
+      createGoalFromEvent: (input) =>
+        createGoalWithMapping(uid, {
+          title: input.title,
+          targetDate: input.targetDate,
+          mapping: {
+            connectionId,
+            calendarId,
+            eventId: input.eventId,
+            remoteEtag: input.remoteEtag,
+            base: { title: input.title, targetDate: input.targetDate, completed: false },
+          },
         }),
+      deleteGoal: (goalId, expected) => deleteGoalWithMapping(uid, goalId, expected),
+      ignoreRemote: (remoteId) => ignoreRemote(uid, "calendar", remoteId),
+      log: (entry) => saveSyncLogEntry(uid, entry),
     };
 
     const { results } = await applyCalendarSync(deps, { planToken, accepted, resolutions, confirmedDestructive });
@@ -120,7 +131,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     const applied = results.filter((result) => result.status === "applied").length;
     const failed = results.filter((result) => result.status === "failed").length;
     return NextResponse.json({
-      ok: results.length > 0 && failed === 0,
+      ok: applied > 0 && failed === 0,
       results,
       applied,
       skipped: results.length - applied - failed,

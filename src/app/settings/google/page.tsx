@@ -9,6 +9,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CalendarSyncCard } from "@/components/sync/CalendarSyncCard";
+import { ConfirmActionDialog } from "@/components/sync/ConfirmActionDialog";
+import { writeCalendarFlag } from "@/lib/googleCalendarFlag";
 import { disconnectGoogleConnection, listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
 import type { GoogleConnectionSummary, GoogleWorkspaceFeature } from "@/types";
 import { CalendarRange, CheckCircle2, ListTodo, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -33,14 +36,17 @@ function GoogleWorkspaceContent() {
   const [connections, setConnections] = React.useState<GoogleConnectionSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [connecting, setConnecting] = React.useState<GoogleWorkspaceFeature | "reconnect" | null>(null);
-  const [disconnectingId, setDisconnectingId] = React.useState<string | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = React.useState<GoogleConnectionSummary | null>(null);
 
   const load = React.useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      setConnections(await listGoogleConnections(idToken));
+      const list = await listGoogleConnections(idToken);
+      setConnections(list);
+      // Keep the cached "is Calendar sync on?" flag honest for the goals page.
+      writeCalendarFlag(user.uid, list.some((connection) => connection.calendarEnabled && connection.status === "active"));
     } catch (error: any) {
       toast.error(error?.message || "Failed to load your Google Workspace connections.");
     } finally {
@@ -102,26 +108,15 @@ function GoogleWorkspaceContent() {
     }
   }
 
-  async function handleDisconnect(connection: GoogleConnectionSummary) {
+  /** Runs after the user confirmed in the dialog. A thrown error stays visible in that dialog. */
+  async function confirmDisconnect(connection: GoogleConnectionSummary) {
     if (!user) return;
-    if (
-      !confirm(
-        `Disconnect ${connection.googleEmail}? Study Lamp will stop syncing. Anything already created in Google stays there.`,
-      )
-    ) {
-      return;
-    }
-    setDisconnectingId(connection.id);
-    try {
-      const idToken = await user.getIdToken();
-      await disconnectGoogleConnection(idToken, connection.id);
-      setConnections((prev) => prev.filter((c) => c.id !== connection.id));
-      toast.success("Disconnected. Anything already in Google was left untouched.");
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to disconnect.");
-    } finally {
-      setDisconnectingId(null);
-    }
+    const idToken = await user.getIdToken();
+    await disconnectGoogleConnection(idToken, connection.id);
+    const remaining = connections.filter((c) => c.id !== connection.id);
+    setConnections(remaining);
+    writeCalendarFlag(user.uid, remaining.some((c) => c.calendarEnabled && c.status === "active"));
+    toast.success("Disconnected. Anything already in Google was left untouched.");
   }
 
   const busy = connecting !== null;
@@ -224,9 +219,8 @@ function GoogleWorkspaceContent() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDisconnect(connection)}
+                      onClick={() => setDisconnectTarget(connection)}
                       aria-label={`Disconnect ${connection.googleEmail}`}
-                      loading={disconnectingId === connection.id}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -253,11 +247,23 @@ function GoogleWorkspaceContent() {
                     );
                   })}
                 </div>
+
+                <CalendarSyncCard connection={connection} onChanged={load} />
               </div>
             ))}
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmActionDialog
+        open={disconnectTarget !== null}
+        onOpenChange={(open) => { if (!open) setDisconnectTarget(null); }}
+        title="Disconnect this Google account?"
+        description={`Study Lamp will stop syncing with ${disconnectTarget?.googleEmail ?? "this account"} and forget its stored access. Anything already created in Google stays there.`}
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={async () => { if (disconnectTarget) await confirmDisconnect(disconnectTarget); }}
+      />
     </AppShell>
   );
 }

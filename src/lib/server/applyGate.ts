@@ -1,5 +1,5 @@
 import { verifyPlanToken, type PlanScope, type PlanTokenItem } from "@/lib/server/planToken";
-import type { PlanItem } from "@/lib/sync/plan";
+import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
 
 export type ApplyDecisionStatus = "applied" | "stale" | "skipped" | "failed";
 
@@ -15,12 +15,21 @@ export type WriterOutcome = void | { skipped: string };
 export interface ApplyConfirmedInput {
   token: string | { uid: string; scope: PlanScope; items: PlanTokenItem[]; exp: number };
   accepted: Iterable<string>;
-  resolutions?: Record<string, "use_study_lamp" | "use_google" | "skip">;
+  /** Keyed by itemId, or `${itemId}:${field}` for one field of a conflict item. */
+  resolutions?: Record<string, SyncResolution>;
   confirmedDestructive?: Iterable<string>;
   freshPlan: PlanItem[];
   writers: Record<string, (item: PlanItem) => Promise<WriterOutcome> | WriterOutcome>;
   expectedUser?: string;
   expectedScope?: PlanScope;
+}
+
+function isDecidedField(field: PlanItem["fields"][number]): boolean {
+  return field.direction === "study_lamp" || field.direction === "google";
+}
+
+function isSideChoice(choice: SyncResolution | undefined): boolean {
+  return choice === "use_study_lamp" || choice === "use_google";
 }
 
 export async function applyConfirmed({
@@ -60,34 +69,28 @@ export async function applyConfirmed({
       continue;
     }
 
-    // Z3 item 3: resolutions are per FIELD for conflict items ({itemId}:{field} -> choice).
-    // Every conflicting field (one with no decided direction) must be resolved; the old
-    // per-item key is still accepted so callers that don't split fields keep working.
+    // Z3 item 3: resolutions are per FIELD for conflict items ({itemId}:{field} -> choice); a per-item
+    // key is the fallback. A field the user left on "skip" is NOT an error: the writer leaves that
+    // field alone on both sides (the conflict simply shows up again next time) and applies the rest.
+    // The item is refused only when nothing at all can be applied.
     if (item.kind === "conflict") {
-      const conflictingFields = item.fields.filter((field) => field.direction !== "study_lamp" && field.direction !== "google");
-      const perItemResolution = resolutions[itemId];
-      let unresolved = false;
-      for (const field of conflictingFields) {
-        const choice = resolutions[`${itemId}:${field.name}`];
-        if (choice === undefined && perItemResolution === undefined) {
-          unresolved = true;
-          break;
-        }
-        if (choice === "skip") {
-          unresolved = true;
-          break;
-        }
-      }
-      if (conflictingFields.length === 0 && (!perItemResolution || perItemResolution === "skip")) {
-        unresolved = true;
-      }
-      if (unresolved) {
+      const conflictingFields = item.fields.filter((field) => !isDecidedField(field));
+      const decidedCount = item.fields.length - conflictingFields.length;
+      const choiceFor = (fieldName: string) => resolutions[`${itemId}:${fieldName}`] ?? resolutions[itemId];
+      const resolvedCount = conflictingFields.filter((field) => isSideChoice(choiceFor(field.name))).length;
+      const nothingToApply = conflictingFields.length > 0
+        ? resolvedCount === 0 && decidedCount === 0
+        : !isSideChoice(resolutions[itemId]);
+      if (nothingToApply) {
         results.push({ itemId, status: "skipped", code: "missing_resolution" });
         continue;
       }
     }
 
-    if (item.risk === "destructive" && !confirmedDestructiveSet.has(itemId)) {
+    // A deletion needs its own confirmation. That is true for an item flagged destructive AND for an
+    // item where the user picked "delete_goal" (remote_deleted is only destructive for that choice).
+    const isDestructive = item.risk === "destructive" || resolutions[itemId] === "delete_goal";
+    if (isDestructive && !confirmedDestructiveSet.has(itemId)) {
       results.push({ itemId, status: "skipped", code: "destructive_not_confirmed" });
       continue;
     }
@@ -107,6 +110,8 @@ export async function applyConfirmed({
         results.push({ itemId, status: "applied" });
       }
     } catch {
+      // The writer's own error is deliberately not copied into the result (Rule 4/5); writers that
+      // need the error logged do so themselves before rethrowing.
       results.push({ itemId, status: "failed", code: "writer_error" });
     }
   }

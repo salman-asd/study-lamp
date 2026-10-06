@@ -26,6 +26,20 @@ export async function isIgnored(uid: string, target: string, remoteId: string): 
 }
 
 /**
+ * All remote ids the user chose to ignore for one target, read in a single query (one equality filter, so no
+ * composite index). The planner uses this instead of calling isIgnored once per event.
+ */
+export async function listIgnoredRemoteIds(uid: string, target: string): Promise<Set<string>> {
+  const snap = await ignoredRef(uid).where("target", "==", target).limit(1000).get();
+  const ids = new Set<string>();
+  for (const doc of snap.docs) {
+    const remoteId = doc.data().remoteId;
+    if (typeof remoteId === "string" && remoteId) ids.add(remoteId);
+  }
+  return ids;
+}
+
+/**
  * Records an ignore for a specific remote item.
  * Only call this from the apply route when the user explicitly chose "Ignore".
  */

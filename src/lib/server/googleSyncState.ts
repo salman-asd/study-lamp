@@ -1,4 +1,4 @@
-﻿import admin from "firebase-admin";
+import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import {
   hashSyncBase,
@@ -37,10 +37,13 @@ export interface SaveCalendarMappingInput {
   calendar: Omit<CalendarMapping, "hash" | "lastSyncAt" | "lastErrorCode" | "status"> & { status?: CalendarMapping["status"] };
 }
 
-/** Writes the whole `calendar` block (and the title snapshot) for one goal. Own mapping doc only. */
-export async function saveCalendarMapping(uid: string, goalId: string, input: SaveCalendarMappingInput): Promise<void> {
+/**
+ * The stored shape of a mapping doc. Pure apart from the server timestamp sentinel, and exported so
+ * goalSyncStore can write a goal change and its mapping in ONE transaction/batch.
+ */
+export function buildCalendarMappingDoc(input: SaveCalendarMappingInput) {
   const { calendar } = input;
-  await googleSyncRef(uid).doc(goalId).set({
+  return {
     titleSnapshot: input.titleSnapshot.slice(0, 500),
     calendar: {
       connectionId: calendar.connectionId,
@@ -53,7 +56,16 @@ export async function saveCalendarMapping(uid: string, goalId: string, input: Sa
       lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
       lastErrorCode: null,
     },
-  }, { merge: true });
+  };
+}
+
+export function mappingDocRef(uid: string, goalId: string) {
+  return googleSyncRef(uid).doc(goalId);
+}
+
+/** Writes the whole `calendar` block (and the title snapshot) for one goal. Own mapping doc only. */
+export async function saveCalendarMapping(uid: string, goalId: string, input: SaveCalendarMappingInput): Promise<void> {
+  await googleSyncRef(uid).doc(goalId).set(buildCalendarMappingDoc(input), { merge: true });
 }
 
 /** Records a failure code on an EXISTING mapping. Never creates a mapping. */

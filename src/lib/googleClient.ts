@@ -1,4 +1,4 @@
-import type { PlanItem } from "@/lib/sync/plan";
+import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
 import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
 
 async function parseOrThrow(res: Response): Promise<any> {
@@ -64,14 +64,37 @@ export async function toggleGoogleCalendar(idToken: string, connectionId: string
   return data;
 }
 
-export async function planGoogleSync(idToken: string, goalIds?: string[], connectionId?: string): Promise<{ planToken: string; items: any[]; counts: any; remaining: number }> {
+export interface GoogleSyncPlanResponse {
+  planToken: string;
+  items: PlanItem[];
+  counts: { push: number; pull: number; conflict: number; attention: number; remoteDeleted: number; orphaned: number };
+  orphans: Array<{ goalId: string; titleSnapshot: string; eventId: string }>;
+  remaining: number;
+}
+
+/** Read-only. Nothing is written anywhere; the response only describes what an apply WOULD do. */
+export async function planGoogleSync(idToken: string, goalIds?: string[], connectionId?: string): Promise<GoogleSyncPlanResponse> {
   const res = await fetch("/api/google/sync/plan", {
     method: "POST",
     headers: authHeaders(idToken, true),
     body: JSON.stringify({ ...(goalIds && goalIds.length ? { goalIds } : {}), ...(connectionId ? { connectionId } : {}) }),
   });
   const data = await parseOrThrow(res);
-  return data;
+  return data as GoogleSyncPlanResponse;
+}
+
+export interface GoogleSyncApplyResult {
+  itemId: string;
+  status: "applied" | "stale" | "skipped" | "failed";
+  code?: string;
+}
+
+export interface GoogleSyncApplyResponse {
+  ok: boolean;
+  results: GoogleSyncApplyResult[];
+  applied: number;
+  skipped: number;
+  failed: number;
 }
 
 export async function applyGoogleSync(
@@ -79,18 +102,19 @@ export async function applyGoogleSync(
   input: {
     planToken: string;
     accepted: string[];
-    resolutions?: Record<string, "use_study_lamp" | "use_google" | "skip">;
+    /** Keyed by itemId, or `${itemId}:${field}` for one field of a conflict. */
+    resolutions?: Record<string, SyncResolution>;
     confirmedDestructive?: string[];
     connectionId?: string;
   },
-): Promise<{ ok?: boolean; results?: any[]; error?: string }> {
+): Promise<GoogleSyncApplyResponse> {
   const res = await fetch("/api/google/sync/apply", {
     method: "POST",
     headers: authHeaders(idToken, true),
     body: JSON.stringify(input),
   });
   const data = await parseOrThrow(res);
-  return data;
+  return data as GoogleSyncApplyResponse;
 }
 
 // ─── Z2: "Add to Google Doc / Sheet" (preview -> confirm -> apply) ──────────────────────────────

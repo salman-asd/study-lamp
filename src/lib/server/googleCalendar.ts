@@ -1,5 +1,5 @@
-﻿import crypto from "crypto";
-import { addDaysToIsoDate, isValidIsoDate, isoDatePart } from "@/lib/isoDate";
+import crypto from "crypto";
+import { addDaysToIsoDate, isValidIsoDate } from "@/lib/isoDate";
 
 export interface GoogleCalendarEventLike {
   id?: string | null;
@@ -19,34 +19,85 @@ export interface GoogleCalendarEventLike {
   } | null;
 }
 
-export interface GoalCalendarFields {
-  title: string;
-  targetDate: string | null;
-  completed: boolean;
-  cancelled: boolean;
-}
+/** Goals rules: title is 1..500 characters (firestore.rules, `optionalString(..., 'title', 500)`). */
+export const GOAL_TITLE_MAX = 500;
+/** What we send as the event summary. Google allows more, but a short cap keeps the calendar readable. */
+export const CALENDAR_SUMMARY_MAX = 200;
 
 export function stripGoogleCompletionMarker(title: string): string {
   return title.replace(/^\s*✓\s+/, "").trim();
 }
 
-export function eventToGoalFields(event: GoogleCalendarEventLike): GoalCalendarFields {
+/** The exact summary Study Lamp writes for a goal. The completion prefix counts toward the cap. */
+export function calendarSummaryFor(title: string, completed: boolean): string {
+  const prefixed = completed ? `✓ ${title}` : title;
+  return prefixed.trim().slice(0, CALENDAR_SUMMARY_MAX);
+}
+
+/**
+ * The title as Google would hold it after we wrote it. Comparing goal titles through this function
+ * means a long title (cut at 200 characters on the way out) is not mistaken for a change made in Google.
+ */
+export function titleAsGoogleHolds(title: string, completed: boolean): string {
+  return stripGoogleCompletionMarker(calendarSummaryFor(title, completed));
+}
+
+/** Why an event can't be turned into goal fields. Each code gets a plain sentence in the UI. */
+export type EventAttentionReason =
+  | "cancelled"
+  | "timed"
+  | "multi_day"
+  | "no_date"
+  | "invalid_date"
+  | "empty_title"
+  | "title_too_long";
+
+export interface EventGoalFieldsOk {
+  attention?: undefined;
+  title: string;
+  targetDate: string;
+  completed: boolean;
+}
+
+export interface EventGoalFieldsAttention {
+  attention: EventAttentionReason;
+  /** Best-effort title for display only. Never write this into a goal. */
+  title: string;
+  completed: boolean;
+}
+
+export type EventGoalFields = EventGoalFieldsOk | EventGoalFieldsAttention;
+
+/**
+ * Reads a Calendar event as goal fields, or says why it can't be. Nothing is guessed:
+ * timed events, multi-day events, cancelled events, missing/invalid dates and unusable titles
+ * all come back as `attention`. A usable event is an all-day, single-day event
+ * (Google ends it on the NEXT day: end = start + 1).
+ */
+export function eventToGoalFields(event: GoogleCalendarEventLike): EventGoalFields {
   const summary = event.summary ?? "";
   const completed = /^\s*✓\s+/.test(summary);
   const title = stripGoogleCompletionMarker(summary);
-  const cancelled = (event.status ?? "") === "cancelled";
+  const attention = (reason: EventAttentionReason): EventGoalFieldsAttention => ({ attention: reason, title, completed });
 
-  const dateValue = event.start?.date ?? (event.start?.dateTime ? isoDatePart(event.start.dateTime) : null);
-  if (!dateValue || !isValidIsoDate(dateValue)) {
-    return { title: title || "", targetDate: null, completed, cancelled };
+  if ((event.status ?? "") === "cancelled") return attention("cancelled");
+
+  const startDate = event.start?.date ?? null;
+  if (event.start?.dateTime || event.end?.dateTime) return attention("timed");
+  if (!startDate) return attention("no_date");
+  if (!isValidIsoDate(startDate)) return attention("invalid_date");
+
+  const endDate = event.end?.date ?? null;
+  // Google always sends `end`; a missing one is tolerated (treated as a single day), a wrong one is not.
+  if (endDate !== null) {
+    if (!isValidIsoDate(endDate)) return attention("invalid_date");
+    if (endDate !== addDaysToIsoDate(startDate, 1)) return attention("multi_day");
   }
 
-  return {
-    title,
-    targetDate: dateValue,
-    completed,
-    cancelled,
-  };
+  if (!title) return attention("empty_title");
+  if (title.length > GOAL_TITLE_MAX) return attention("title_too_long");
+
+  return { title, targetDate: startDate, completed };
 }
 
 export function buildCalendarEventId(uid: string, goalId: string): string {
@@ -91,9 +142,8 @@ export function buildCalendarEvent(goal: CalendarGoalInput): CalendarEventPayloa
     throw new Error("Goal targetDate must be a valid ISO date.");
   }
 
-  const title = goal.completed ? `✓ ${goal.title}` : goal.title;
   return {
-    summary: title.trim().slice(0, 200),
+    summary: calendarSummaryFor(goal.title, Boolean(goal.completed)),
     start: { date: goal.targetDate },
     end: { date: addDaysToIsoDate(goal.targetDate, 1) },
     extendedProperties: {

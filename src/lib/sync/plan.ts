@@ -13,6 +13,25 @@ export type PlanItemKind =
 
 export type PlanRisk = "normal" | "destructive";
 
+/**
+ * How the user resolved an item. Conflict fields use "use_study_lamp" | "use_google" | "skip",
+ * a remote_deleted item uses "unlink" | "recreate" | "delete_goal", and an event-only item
+ * (pull_create / attention) may use "ignore". Type only: this file imports `crypto`, so client
+ * code must never import a VALUE from it.
+ */
+export type SyncResolution = "use_study_lamp" | "use_google" | "skip" | "unlink" | "recreate" | "delete_goal" | "ignore";
+
+/** Why an item can't be applied automatically. The dialog turns each code into a plain sentence. */
+export type PlanAttentionReason =
+  | "cancelled"
+  | "timed"
+  | "multi_day"
+  | "no_date"
+  | "invalid_date"
+  | "empty_title"
+  | "title_too_long"
+  | "goal_has_no_date";
+
 export interface PlanFieldChange {
   name: string;
   before: PlanValue;
@@ -36,6 +55,8 @@ export interface PlanItem {
   fields: PlanFieldChange[];
   risk: PlanRisk;
   fingerprint: string;
+  /** Set on "attention" items only. */
+  reason?: PlanAttentionReason | null;
 }
 
 export interface PlanItemInput {
@@ -48,6 +69,7 @@ export interface PlanItemInput {
   remoteId?: string | null;
   localValue?: PlanValue;
   remoteVersion?: string | null;
+  reason?: PlanAttentionReason | null;
 }
 
 export function makePlanItemId({ target, goalId, remoteId, kind }: { target: string; kind: PlanItemKind; goalId?: string | null; remoteId?: string | null }): string {
@@ -63,6 +85,7 @@ export function computePlanFingerprint({
   remoteId,
   localValue,
   remoteVersion,
+  reason,
 }: {
   kind: PlanItemKind;
   target: string;
@@ -71,6 +94,7 @@ export function computePlanFingerprint({
   remoteId?: string | null;
   localValue?: PlanValue;
   remoteVersion?: string | null;
+  reason?: PlanAttentionReason | null;
 }): string {
   const payload = JSON.stringify({
     kind,
@@ -87,6 +111,7 @@ export function computePlanFingerprint({
     })),
     localValue: localValue ?? null,
     remoteVersion: remoteVersion ?? null,
+    reason: reason ?? null,
   });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
@@ -101,6 +126,7 @@ export function buildPlanItem(input: PlanItemInput): PlanItem {
     fields: input.fields,
     localValue: input.localValue,
     remoteVersion: input.remoteVersion,
+    reason: input.reason,
   });
 
   return {
@@ -113,5 +139,6 @@ export function buildPlanItem(input: PlanItemInput): PlanItem {
     fields: input.fields,
     risk: input.risk ?? "normal",
     fingerprint,
+    ...(input.reason ? { reason: input.reason } : {}),
   };
 }
