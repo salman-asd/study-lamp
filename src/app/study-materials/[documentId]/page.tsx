@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
 import { DocumentReaderSwitch } from "@/components/documents/DocumentReaderSwitch";
+import { GoogleAppendMenu } from "@/components/documents/GoogleAppendMenu";
 import { DocumentStudyMobileSheet, DocumentStudyPanel } from "@/components/documents/DocumentStudyPanel";
 import { useDocumentProgress } from "@/hooks/useDocumentProgress";
 import { useDocumentStudy } from "@/hooks/useDocumentStudy";
@@ -144,6 +145,7 @@ function StudyMaterialDetailContent() {
             <Button variant="outline" size="sm" onClick={handleDownload}>
               <Download className="mr-1.5 h-4 w-4" />Download
             </Button>
+            <GoogleAppendMenu doc={doc} />
             <Button asChild variant="outline" size="sm"><a href={driveViewUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" />Open in Drive</a></Button>
           </div>
         </div>

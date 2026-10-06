@@ -16,6 +16,8 @@ export interface VerifiedPlanToken {
   scope: PlanScope;
   items: PlanTokenItem[];
   exp: number;
+  /** Random one-time id (16 bytes, base64url). Used by markTokenUsed to reject replays. */
+  jti: string;
 }
 
 export class PlanTokenVerificationError extends Error {
@@ -52,6 +54,7 @@ export function signPlanToken(input: SignPlanTokenInput, nowMs = Date.now()): st
     scope: input.scope,
     items: input.items.map((item) => ({ itemId: item.itemId, fingerprint: item.fingerprint })),
     exp,
+    jti: crypto.randomBytes(16).toString("base64url"),
   };
 
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -88,7 +91,8 @@ export function verifyPlanToken(token: string, expectedUser?: string, expectedSc
   }
 
   const nowSeconds = Math.floor(nowMs / 1000);
-  if (!Number.isInteger(payload.exp) || payload.exp <= nowSeconds) {
+  const exp = payload.exp;
+  if (!Number.isInteger(exp) || exp === undefined || exp <= nowSeconds) {
     throw new PlanTokenVerificationError("expired", "Plan token has expired.");
   }
 
@@ -106,10 +110,15 @@ export function verifyPlanToken(token: string, expectedUser?: string, expectedSc
     throw new PlanTokenVerificationError("tampered", "Plan token item list is invalid.");
   }
 
+  if (typeof payload.jti !== "string" || payload.jti.length === 0) {
+    throw new PlanTokenVerificationError("tampered", "Plan token is missing its one-time id.");
+  }
+
   return {
     uid: payload.uid,
     scope: payload.scope as PlanScope,
     items: validItems,
-    exp: payload.exp,
+    exp,
+    jti: payload.jti,
   };
 }

@@ -1,4 +1,5 @@
-﻿import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
+import type { PlanItem } from "@/lib/sync/plan";
+import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
 
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
@@ -90,4 +91,86 @@ export async function applyGoogleSync(
   });
   const data = await parseOrThrow(res);
   return data;
+}
+
+// ─── Z2: "Add to Google Doc / Sheet" (preview -> confirm -> apply) ──────────────────────────────
+
+export type GoogleAppendTarget = "docs" | "sheets";
+export type GoogleDocContentKind = "summary" | "notes" | "quiz_review";
+
+/** `code` mirrors the server: stale | permission | not_found | reconnect | nothing_to_add | plan_already_applied | ... */
+export class GoogleAppendError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(message: string, code: string, status: number) {
+    super(message);
+    this.name = "GoogleAppendError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export interface GoogleDocsAppendPreview {
+  planToken: string;
+  item: PlanItem;
+  preview: { documentTitle: string; openUrl: string; kind: GoogleDocContentKind; kindLabel: string; heading: string; text: string; truncated: boolean };
+}
+
+export interface GoogleSheetsAppendPreview {
+  planToken: string;
+  item: PlanItem;
+  preview: {
+    documentTitle: string;
+    openUrl: string;
+    tab: string;
+    willCreateTab: boolean;
+    header: Array<string | number> | null;
+    rows: Array<Array<string | number>>;
+    remaining: number;
+  };
+}
+
+async function parseAppendResponse<T>(res: Response): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new GoogleAppendError(
+      typeof data?.error === "string" ? data.error : `Request failed (${res.status})`,
+      typeof data?.code === "string" ? data.code : "error",
+      res.status,
+    );
+  }
+  return data as T;
+}
+
+/** Read-only. Returns the exact text the server would add, plus a signed plan token. Nothing is written. */
+export async function previewGoogleDocAppend(idToken: string, documentId: string, content: GoogleDocContentKind): Promise<GoogleDocsAppendPreview> {
+  const res = await fetch("/api/drive/docs/append/preview", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ documentId, content }),
+  });
+  return parseAppendResponse<GoogleDocsAppendPreview>(res);
+}
+
+export async function previewGoogleSheetAppend(idToken: string, documentId: string): Promise<GoogleSheetsAppendPreview> {
+  const res = await fetch("/api/drive/sheets/append/preview", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ documentId }),
+  });
+  return parseAppendResponse<GoogleSheetsAppendPreview>(res);
+}
+
+/** The body is ONLY {planToken, accepted, documentId}; the server rebuilds the content itself. */
+export async function applyGoogleAppend(
+  idToken: string,
+  target: GoogleAppendTarget,
+  input: { planToken: string; accepted: string[]; documentId: string },
+): Promise<{ ok: true; status: "applied"; warnings?: string[] }> {
+  const res = await fetch(`/api/drive/${target}/append/apply`, {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ planToken: input.planToken, accepted: input.accepted, documentId: input.documentId }),
+  });
+  return parseAppendResponse(res);
 }

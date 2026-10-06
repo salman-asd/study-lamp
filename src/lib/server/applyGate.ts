@@ -40,12 +40,14 @@ export async function applyConfirmed({
   const freshById = new Map(freshPlan.map((item) => [item.itemId, item]));
 
   const results: ApplyDecision[] = [];
+  const seenItemIds = new Set<string>();
 
   for (const item of freshPlan) {
     const itemId = item.itemId;
     if (!tokenItems.has(itemId)) {
       continue;
     }
+    seenItemIds.add(itemId);
 
     if (!acceptedSet.has(itemId)) {
       results.push({ itemId, status: "skipped", code: "not_accepted" });
@@ -58,10 +60,31 @@ export async function applyConfirmed({
       continue;
     }
 
-    const resolution = resolutions[itemId];
-    if (item.kind === "conflict" && (!resolution || resolution === "skip")) {
-      results.push({ itemId, status: "skipped", code: "missing_resolution" });
-      continue;
+    // Z3 item 3: resolutions are per FIELD for conflict items ({itemId}:{field} -> choice).
+    // Every conflicting field (one with no decided direction) must be resolved; the old
+    // per-item key is still accepted so callers that don't split fields keep working.
+    if (item.kind === "conflict") {
+      const conflictingFields = item.fields.filter((field) => field.direction !== "study_lamp" && field.direction !== "google");
+      const perItemResolution = resolutions[itemId];
+      let unresolved = false;
+      for (const field of conflictingFields) {
+        const choice = resolutions[`${itemId}:${field.name}`];
+        if (choice === undefined && perItemResolution === undefined) {
+          unresolved = true;
+          break;
+        }
+        if (choice === "skip") {
+          unresolved = true;
+          break;
+        }
+      }
+      if (conflictingFields.length === 0 && (!perItemResolution || perItemResolution === "skip")) {
+        unresolved = true;
+      }
+      if (unresolved) {
+        results.push({ itemId, status: "skipped", code: "missing_resolution" });
+        continue;
+      }
     }
 
     if (item.risk === "destructive" && !confirmedDestructiveSet.has(itemId)) {
@@ -85,6 +108,14 @@ export async function applyConfirmed({
       }
     } catch {
       results.push({ itemId, status: "failed", code: "writer_error" });
+    }
+  }
+
+  // Rule 8: an item the user confirmed but that is no longer in the fresh plan is
+  // reported as stale (never silently dropped).
+  for (const itemId of tokenItems.keys()) {
+    if (!seenItemIds.has(itemId)) {
+      results.push({ itemId, status: "stale", code: "item_gone" });
     }
   }
 

@@ -2,6 +2,7 @@ import type { PlanItem } from "@/lib/sync/plan";
 import { isValidIsoDate } from "@/lib/isoDate";
 import { applyConfirmed, type ApplyDecision, type WriterOutcome } from "@/lib/server/applyGate";
 import { verifyPlanToken, type PlanScope, type PlanTokenItem } from "@/lib/server/planToken";
+import { markTokenUsed } from "@/lib/server/googleUsedTokens";
 import {
   buildCalendarEvent,
   buildCalendarEventId,
@@ -34,6 +35,8 @@ export interface GoalSyncApplyInput {
   expectedUser?: string;
   expectedScope?: PlanScope;
   writers?: Record<string, (item: PlanItem) => Promise<WriterOutcome> | WriterOutcome>;
+  /** Claims the token's one-time id. Injectable so tests can use a fake store (Z3 item 6). */
+  claimToken?: (uid: string, jti: string, exp: number) => Promise<boolean>;
 }
 
 /** Verifies the token and runs the confirmation gate. The gate is the only path to a writer. */
@@ -46,8 +49,14 @@ export async function applyGoalSyncPlan({
   expectedUser,
   expectedScope,
   writers = {},
+  claimToken = markTokenUsed,
 }: GoalSyncApplyInput) {
   const verification = verifyPlanToken(token, expectedUser, expectedScope);
+
+  // One-time token (Z3 item 6): claim the jti BEFORE any writer can run. A replay
+  // returns 409 from the route because this throws.
+  const claimed = await claimToken(verification.uid, verification.jti, verification.exp);
+  if (!claimed) throw new PlanAlreadyAppliedError();
 
   return applyConfirmed({
     token: verification,
@@ -67,6 +76,14 @@ export function isValidPlanTokenItem(value: unknown): value is PlanTokenItem {
   return typeof item.itemId === "string" && typeof item.fingerprint === "string";
 }
 
+/** Thrown when a plan token has already been spent (Z3 item 6). Routes map this to 409. */
+export class PlanAlreadyAppliedError extends Error {
+  constructor() {
+    super("This plan was already applied.");
+    this.name = "PlanAlreadyAppliedError";
+  }
+}
+
 // ─── Calendar apply ─────────────────────────────────────────────────────────
 
 export type GoalPullResult = "ok" | "changed" | "missing";
@@ -80,6 +97,8 @@ export interface CalendarApplyDeps extends CalendarPlanReader {
   /** Writes ONLY our own mapping doc. */
   saveMapping(goalId: string, input: { titleSnapshot: string; eventId: string; remoteEtag: string | null; base: SyncBase }): Promise<void>;
   recordError(goalId: string, code: string): Promise<void>;
+  /** Claims the plan token's one-time id. Injectable so tests use a fake store (Z3 item 6). */
+  claimToken?: (uid: string, jti: string, exp: number) => Promise<boolean>;
   /**
    * Updates the goal in one transaction, only if title and targetDate still equal `expected`
    * (what apply just read). Returns "changed" without writing otherwise.
@@ -153,6 +172,7 @@ export async function applyCalendarSync(deps: CalendarApplyDeps, input: ApplyCal
     expectedUser: deps.uid,
     expectedScope: "calendar",
     writers,
+    claimToken: deps.claimToken,
   });
 
   // The single non-confirmed write: for goals where Study Lamp and Google already agree, remember that

@@ -47,11 +47,18 @@ function makeDeps(world: World, options: { insert?: () => Promise<void>; patch?:
   const writes: Array<{ op: string; detail?: unknown }> = [];
   const saved: Array<{ goalId: string; eventId: string; base: SyncBase; remoteEtag: string | null }> = [];
   const errors: Array<{ goalId: string; code: string }> = [];
+  const usedTokens = new Set<string>();
 
   const deps: CalendarApplyDeps = {
     uid: UID,
     connectionId: "conn-1",
     calendarId: CAL,
+    // Fake one-time-token store; a second claim of the same jti fails (Z3 item 6).
+    claimToken: async (_uid, jti) => {
+      if (usedTokens.has(jti)) return false;
+      usedTokens.add(jti);
+      return true;
+    },
     listGoals: async () => world.goals,
     listMappings: async () => new Map(world.mappings.map((m) => [m.goalId, m])),
     listLiveEvents: async () => ({ events: world.events, truncated: false }),
@@ -84,7 +91,7 @@ function makeDeps(world: World, options: { insert?: () => Promise<void>; patch?:
       return options.pull ?? "ok";
     },
   };
-  return { deps, writes, saved, errors };
+  return { deps, writes, saved, errors, usedTokens };
 }
 
 function previewOf(world: World) {
@@ -340,5 +347,29 @@ describe("applyCalendarSync", () => {
     const out = await applyCalendarSync(deps, { planToken: preview.planToken, accepted: [] });
     assert.equal(out.bookkeeping, 1);
     assert.deepEqual(writes.map((w) => w.op), ["saveMapping"]);
+  });
+});
+
+describe("applyCalendarSync — one-time plan token (Z3 item 6)", () => {
+  beforeEach(() => { process.env.DRIVE_URL_SIGNING_SECRET = "test-apply-secret"; });
+
+  it("replaying the same plan token is rejected and nothing is written", async () => {
+    const world: World = {
+      goals: [goal("g1", "Read chapter 2", "2026-10-10")],
+      events: [],
+      mappings: [],
+    };
+    const preview = previewOf(world);
+    const ctx = makeDeps(world);
+
+    const first = await applyCalendarSync(ctx.deps, { planToken: preview.planToken, accepted: preview.items.map((i) => i.itemId) });
+    assert.equal(first.results[0].status, "applied");
+
+    const writesAfterFirst = ctx.writes.length;
+    await assert.rejects(
+      applyCalendarSync(ctx.deps, { planToken: preview.planToken, accepted: preview.items.map((i) => i.itemId) }),
+      /already applied/i,
+    );
+    assert.equal(ctx.writes.length, writesAfterFirst, "a replayed token must not write anything");
   });
 });

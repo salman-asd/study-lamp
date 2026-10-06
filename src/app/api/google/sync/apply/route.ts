@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { getAccessTokenForConnection, getGoogleCalendarConnection, resolveCalendarConnectionId, touchCalendarLastCheck } from "@/lib/server/googleConnections";
-import { applyCalendarSync, type CalendarApplyDeps, type SyncResolution } from "@/lib/server/goalSyncApply";
+import { applyCalendarSync, PlanAlreadyAppliedError, type CalendarApplyDeps, type SyncResolution } from "@/lib/server/goalSyncApply";
 import type { LiveCalendarEvent } from "@/lib/server/goalSyncPlan";
 import { listGoalSyncMappings, recordCalendarMappingError, saveCalendarMapping } from "@/lib/server/googleSyncState";
 import { createCalendarClient } from "@/lib/server/googleCalendar";
@@ -130,6 +130,9 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     if (error instanceof PlanTokenVerificationError) {
       return NextResponse.json({ error: "Invalid or expired plan token." }, { status: 401 });
     }
+    if (error instanceof PlanAlreadyAppliedError) {
+      return NextResponse.json({ error: "This plan was already applied." }, { status: 409 });
+    }
     return syncErrorResponse("google sync apply", error);
   }
-}, { scope: "googleApply", preset: "googleSync", limit: 20, tooManyMessage: "Too many sync applies. Please slow down." });
+}, { scope: "googleApply", preset: "googleApply", limit: 20, tooManyMessage: "Too many sync applies. Please slow down." });

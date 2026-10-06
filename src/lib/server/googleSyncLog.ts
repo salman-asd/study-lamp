@@ -67,9 +67,9 @@ export async function listSyncLog(
 
   const entries = docs.map((doc) => {
     const data = doc.data() as GoogleSyncLogEntry & { _at?: unknown };
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { _at, ...entry } = data;
-    return entry as GoogleSyncLogEntry;
+    const entry: Record<string, unknown> = { ...data };
+    delete entry._at;
+    return entry as unknown as GoogleSyncLogEntry;
   });
 
   return {

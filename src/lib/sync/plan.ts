@@ -18,6 +18,12 @@ export interface PlanFieldChange {
   before: PlanValue;
   after: PlanValue;
   direction?: "study_lamp" | "google";
+  /**
+   * Conflict items carry BOTH sides so the dialog can show them side by side
+   * (Z3 item 2/3). A field with no `direction` is an unresolved conflict.
+   */
+  local?: PlanValue;
+  remote?: PlanValue;
 }
 
 export interface PlanItem {
@@ -76,6 +82,8 @@ export function computePlanFingerprint({
       before: field.before,
       after: field.after,
       direction: field.direction ?? null,
+      local: field.local ?? null,
+      remote: field.remote ?? null,
     })),
     localValue: localValue ?? null,
     remoteVersion: remoteVersion ?? null,

@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { posix as path } from "path";
 import { readZipEntries } from "@/lib/server/zipReader";
+import { STUDY_LAMP_SHEET_TAB, stripStudyLampDocText, stripStudyLampSheetNames } from "@/lib/server/studyLampSections";
 import type { DocumentFileType } from "@/types";
 
 export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
@@ -106,7 +107,7 @@ function extractXlsxText(buffer: Buffer): string {
   if (workbook.SheetNames.length === 0) throw new Error("Couldn't find any worksheets in this .xlsx file.");
 
   return workbook.SheetNames.map((name) => {
-    if (name === "Study Lamp log") return null;
+    if (name === STUDY_LAMP_SHEET_TAB) return null;
     const sheet = workbook.Sheets[name];
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, blankrows: false })
       .slice(0, MAX_ROWS_PER_SHEET);
@@ -115,20 +116,7 @@ function extractXlsxText(buffer: Buffer): string {
   }).filter((value): value is string => Boolean(value)).join("\n\n");
 }
 
-export function stripStudyLampDocText(value: string): string {
-  const lines = value.split(/\r?\n/);
-  const studyLampHeadingIndex = lines.findIndex((line) => /^Study Lamp\s*—\s*/i.test(line.trim()));
-  if (studyLampHeadingIndex < 0) return value.trim();
-  return lines.slice(0, studyLampHeadingIndex).join("\n").trim();
-}
-
-export function stripStudyLampSheetNames(value: string): string {
-  return value
-    .split(/\n\n/)
-    .filter((section) => !section.startsWith("Sheet: Study Lamp log"))
-    .join("\n\n")
-    .trim();
-}
+export { stripStudyLampDocText, stripStudyLampSheetNames };
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
   const { extractText, getDocumentProxy } = await import("unpdf");
