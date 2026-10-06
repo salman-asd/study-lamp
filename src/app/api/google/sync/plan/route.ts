@@ -1,76 +1,65 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
-import { getGoogleCalendarConnection, getAccessTokenForConnection } from "@/lib/server/googleConnections";
-import { buildGoalSyncPlan } from "@/lib/server/goalSyncPlan";
-import { listGoalRemoteEvents, saveGoalRemoteEvent } from "@/lib/server/googleSyncState";
-import { eventToGoalFields, listCalendarEvents } from "@/lib/server/googleCalendar";
+import { getAccessTokenForConnection, getGoogleCalendarConnection, resolveCalendarConnectionId } from "@/lib/server/googleConnections";
+import { planCalendarSync, type CalendarPlanReader, type LiveCalendarEvent } from "@/lib/server/goalSyncPlan";
+import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
+import { createCalendarClient } from "@/lib/server/googleCalendar";
+import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 import { readJsonObject, withAuthedRoute } from "@/lib/server/routeHelpers";
+import type { Goal } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const EMPTY_PLAN = {
+  planToken: "",
+  items: [],
+  counts: { push: 0, pull: 0, conflict: 0, attention: 0, remoteDeleted: 0 },
+  remaining: 0,
+};
+
+/**
+ * PREVIEW. Performs ZERO writes: no Google write, no goal write, no Firestore mapping or sync-state write
+ * (Global Rule 15). It only reads goals, mapping docs and live Calendar events.
+ */
 export const POST = withAuthedRoute(async ({ uid, req }) => {
   const parsed = await readJsonObject(req);
   if (!parsed.ok) return parsed.response;
 
   const body = parsed.body;
   const goalIds = Array.isArray(body.goalIds) ? body.goalIds.filter((value): value is string => typeof value === "string") : [];
+  const requestedConnectionId = typeof body.connectionId === "string" ? body.connectionId : null;
 
   if (goalIds.length > 25) {
     return NextResponse.json({ error: "goalIds must contain at most 25 items." }, { status: 400 });
   }
 
   try {
-    const [snapshot, storedRemoteEvents, connection] = await Promise.all([
-      adminDb.collection("users").doc(uid).collection("goals").get(),
-      listGoalRemoteEvents(uid),
-      getGoogleCalendarConnection(uid, "calendar"),
-    ]);
+    const connectionId = await resolveCalendarConnectionId(uid, requestedConnectionId);
+    const connection = await getGoogleCalendarConnection(uid, connectionId);
+    if (!connection?.enabled || !connection.calendarId) return NextResponse.json(EMPTY_PLAN);
 
-    const goals = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const calendarId = connection.calendarId;
+    const accessToken = await getAccessTokenForConnection(uid, connectionId, "calendar");
+    const client = createCalendarClient(accessToken);
 
-    if (!connection?.enabled || !connection.calendarId) {
-      return NextResponse.json({
-        planToken: "",
-        items: [],
-        counts: { push: 0, pull: 0, conflict: 0, attention: 0, remoteDeleted: 0 },
-        remaining: 0,
-      });
-    }
+    const reader: CalendarPlanReader = {
+      async listGoals() {
+        const snapshot = await adminDb.collection("users").doc(uid).collection("goals").get();
+        return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal);
+      },
+      listMappings: () => listGoalSyncMappings(uid),
+      async listLiveEvents() {
+        const listed = await client.listEvents(calendarId, { showDeleted: true });
+        const events = listed.items.filter((event): event is LiveCalendarEvent => typeof event.id === "string" && event.id.length > 0);
+        return { events, truncated: listed.truncated };
+      },
+    };
 
-    const accessToken = await getAccessTokenForConnection(uid, "calendar", "calendar");
-    const remoteList = await listCalendarEvents(accessToken, connection.calendarId, { showDeleted: true });
-
-    const remoteEvents = await Promise.all((remoteList.items ?? [])
-      .filter((event) => event.id && event.extendedProperties?.private?.studylampGoalId)
-      .map(async (event) => {
-        const goalId = event.extendedProperties?.private?.studylampGoalId;
-        if (!goalId) return null;
-        const fields = eventToGoalFields(event);
-        await saveGoalRemoteEvent(uid, goalId, {
-          goalId,
-          remoteId: event.id ?? goalId,
-          title: fields.title || event.summary || null,
-          targetDate: fields.targetDate ?? null,
-          status: event.status === "cancelled" ? "cancelled" : "active",
-          base: { title: fields.title || (event.summary ?? null), targetDate: fields.targetDate ?? null },
-          etag: (event as any).etag ?? null,
-        });
-        return {
-          remoteId: event.id ?? goalId,
-          title: fields.title || event.summary || "",
-          targetDate: fields.targetDate ?? null,
-          base: { title: fields.title || (event.summary ?? null), targetDate: fields.targetDate ?? null },
-          status: event.status === "cancelled" ? "cancelled" : "active",
-          etag: (event as any).etag ?? null,
-        };
-      }));
-
-    const effectiveRemoteEvents = remoteEvents.filter(Boolean).concat(storedRemoteEvents);
-    const plan = buildGoalSyncPlan({ uid, goals: goals as any, goalIds, remoteEvents: effectiveRemoteEvents as any, scope: "calendar" });
+    const plan = await planCalendarSync(reader, { uid, calendarId, goalIds });
     return NextResponse.json({ planToken: plan.planToken, items: plan.items, counts: plan.counts, remaining: plan.remaining });
   } catch (error) {
-    return NextResponse.json({ error: "Couldn't build the sync plan." }, { status: 500 });
+    return syncErrorResponse("google sync plan", error);
   }
 }, { scope: "googleSync", preset: "googleSync", limit: 30, tooManyMessage: "Too many sync checks. Please slow down." });

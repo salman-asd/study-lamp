@@ -9,13 +9,16 @@ export interface ApplyDecision {
   code?: string;
 }
 
+/** A writer returns nothing when it wrote, or `{ skipped: code }` when it deliberately did nothing. */
+export type WriterOutcome = void | { skipped: string };
+
 export interface ApplyConfirmedInput {
   token: string | { uid: string; scope: PlanScope; items: PlanTokenItem[]; exp: number };
   accepted: Iterable<string>;
   resolutions?: Record<string, "use_study_lamp" | "use_google" | "skip">;
   confirmedDestructive?: Iterable<string>;
   freshPlan: PlanItem[];
-  writers: Record<string, (item: PlanItem) => Promise<void> | void>;
+  writers: Record<string, (item: PlanItem) => Promise<WriterOutcome> | WriterOutcome>;
   expectedUser?: string;
   expectedScope?: PlanScope;
 }
@@ -73,8 +76,13 @@ export async function applyConfirmed({
     }
 
     try {
-      await writer(freshById.get(itemId) ?? item);
-      results.push({ itemId, status: "applied" });
+      const outcome = await writer(freshById.get(itemId) ?? item);
+      if (outcome && typeof outcome === "object" && typeof outcome.skipped === "string") {
+        // Rule 8: a deliberate no-op is "skipped" with a code, never "applied".
+        results.push({ itemId, status: "skipped", code: outcome.skipped });
+      } else {
+        results.push({ itemId, status: "applied" });
+      }
     } catch {
       results.push({ itemId, status: "failed", code: "writer_error" });
     }

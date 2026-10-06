@@ -1,0 +1,32 @@
+import { NextResponse } from "next/server";
+import { GoogleConnectionError } from "@/lib/server/googleConnections";
+import { GoogleCalendarApiError } from "@/lib/server/googleCalendar";
+import { CalendarListTruncatedError } from "@/lib/server/goalSyncPlan";
+import { logServerError } from "@/lib/server/logError";
+
+/** Maps known failures to fixed, generic messages. Library and Google messages are never returned. */
+export function syncErrorResponse(label: string, error: unknown): NextResponse {
+  if (error instanceof GoogleConnectionError) {
+    const status = error.code === "not_found" ? 404 : error.code === "network" ? 502 : 409;
+    const messages: Record<GoogleConnectionError["code"], string> = {
+      not_found: "Google connection not found.",
+      invalid: "This Google connection needs to be reconnected.",
+      network: "Couldn't reach Google. Please try again shortly.",
+      scope_missing: "This Google connection does not have Calendar access.",
+      calendar_deleted: "The Study Lamp calendar was deleted in Google. Turn Calendar sync on again to create a new one.",
+    };
+    return NextResponse.json({ error: messages[error.code] }, { status });
+  }
+  if (error instanceof CalendarListTruncatedError) {
+    return NextResponse.json({ error: "The Study Lamp calendar has too many events to compare safely." }, { status: 409 });
+  }
+  if (error instanceof GoogleCalendarApiError) {
+    logServerError(label, error);
+    if (error.kind === "remote_missing") {
+      return NextResponse.json({ error: "The Study Lamp calendar was not found in Google." }, { status: 409 });
+    }
+    return NextResponse.json({ error: "Google Calendar could not be reached. Please try again shortly." }, { status: 502 });
+  }
+  logServerError(label, error);
+  return NextResponse.json({ error: "Couldn't complete the sync request." }, { status: 500 });
+}

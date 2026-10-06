@@ -1,7 +1,7 @@
 ﻿import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
-import { getOrCreateStudyLampCalendar } from "@/lib/server/googleCalendar";
+import { CalendarDeletedError, createCalendarClient, ensureStudyLampCalendar } from "@/lib/server/googleCalendar";
 import { refreshWorkspaceAccessToken, revokeWorkspaceToken } from "@/lib/server/googleWorkspaceAuth";
 import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
@@ -126,7 +126,7 @@ export function invalidateAccessToken(uid: string, connectionId: string): void {
 }
 
 export class GoogleConnectionError extends Error {
-  code: "not_found" | "invalid" | "network" | "scope_missing";
+  code: "not_found" | "invalid" | "network" | "scope_missing" | "calendar_deleted";
   constructor(code: GoogleConnectionError["code"], message: string) {
     super(message);
     this.code = code;
@@ -235,107 +235,139 @@ export async function getAccessTokenForConnection(
   });
 }
 
-export async function getGoogleCalendarConnection(uid: string, id = "calendar"): Promise<GoogleCalendarConnection | null> {
-  const snap = await googleConnectionsRef(uid).doc(id).get();
-  if (!snap.exists) return null;
-  const data = snap.data()!;
+/** Connection ids are Firestore doc ids: non-empty, no slashes, bounded. Anything else is rejected before a lookup. */
+export function isPlausibleConnectionId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 && !value.includes("/");
+}
+
+export interface CalendarSettingsView {
+  enabled: boolean;
+  calendarId: string | null;
+  calendarName: string | null;
+  lastCheckAt: string | null;
+}
+
+/** Reads the `calendar` block of a connection doc. Pure. */
+export function calendarSettingsFrom(data: FirebaseFirestore.DocumentData): CalendarSettingsView {
+  const calendar = data.calendar && typeof data.calendar === "object" ? data.calendar : {};
   return {
-    id: snap.id,
-    enabled: Boolean(data.calendar?.enabled ?? data.enabled ?? false),
-    calendarId: data.calendarId ?? null,
-    calendarName: data.calendarName ?? null,
-    lastSyncAt: toIso(data.lastSyncAt ?? null),
-    counts: {
-      synced: Number(data.counts?.synced ?? 0),
-      failed: Number(data.counts?.failed ?? 0),
-      remoteDeleted: Number(data.counts?.remoteDeleted ?? 0),
-      noDate: Number(data.counts?.noDate ?? 0),
-      orphaned: Number(data.counts?.orphaned ?? 0),
-    },
+    enabled: calendar.enabled === true,
+    calendarId: typeof calendar.calendarId === "string" && calendar.calendarId ? calendar.calendarId : null,
+    calendarName: typeof calendar.calendarName === "string" && calendar.calendarName ? calendar.calendarName : null,
+    lastCheckAt: toIso(calendar.lastCheckAt ?? null),
+  };
+}
+
+function hasUsableToken(data: FirebaseFirestore.DocumentData | undefined): data is FirebaseFirestore.DocumentData {
+  return !!data && typeof data.encryptedRefreshToken === "string" && data.encryptedRefreshToken.length > 0;
+}
+
+function calendarConnectionFrom(id: string, data: FirebaseFirestore.DocumentData): GoogleCalendarConnection {
+  const settings = calendarSettingsFrom(data);
+  return {
+    id,
+    enabled: settings.enabled,
+    calendarId: settings.calendarId,
+    calendarName: settings.calendarName,
+    lastSyncAt: settings.lastCheckAt,
+    counts: { ...DEFAULT_COUNTS },
     createdAt: data.createdAt ?? null,
     updatedAt: data.updatedAt ?? null,
   };
 }
 
-export async function setGoogleCalendarEnabled(uid: string, enabled: boolean, id = "calendar"): Promise<GoogleCalendarConnection> {
-  const ref = googleConnectionsRef(uid).doc(id);
+/** Reads one connection (by its REAL doc id) as a Calendar view. Null if it does not exist or is not a real connection. */
+export async function getGoogleCalendarConnection(uid: string, connectionId: string): Promise<GoogleCalendarConnection | null> {
+  if (!isPlausibleConnectionId(connectionId)) return null;
+  const snap = await googleConnectionsRef(uid).doc(connectionId).get();
+  const data = snap.data();
+  if (!snap.exists || !hasUsableToken(data)) return null;
+  return calendarConnectionFrom(snap.id, data);
+}
+
+/**
+ * Picks the connection a Calendar route should use. An explicit id must belong to this user and have the calendar
+ * permission. Without one, the user must have exactly one connection with the calendar permission.
+ */
+export async function resolveCalendarConnectionId(uid: string, requestedId?: string | null): Promise<string> {
+  if (requestedId) {
+    if (!isPlausibleConnectionId(requestedId)) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    const snap = await googleConnectionsRef(uid).doc(requestedId).get();
+    if (!snap.exists || !hasUsableToken(snap.data())) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    if (!grantedFeaturesOf(snap.data()!).includes("calendar")) throw new GoogleConnectionError("scope_missing", "This Google connection does not have calendar access enabled.");
+    return snap.id;
+  }
+
+  const snap = await googleConnectionsRef(uid).get();
+  const candidates = snap.docs.filter((doc) => hasUsableToken(doc.data()) && grantedFeaturesOf(doc.data()).includes("calendar"));
+  if (candidates.length === 0) throw new GoogleConnectionError("not_found", "No Google connection with calendar access was found.");
+  if (candidates.length > 1) throw new GoogleConnectionError("not_found", "Choose which Google connection to use.");
+  return candidates[0].id;
+}
+
+/**
+ * Turns Calendar sync on or off for one connection. Enabling verifies the stored calendar (calendars.get) or creates
+ * "Study Lamp goals" (calendars.insert); it writes no events. Disabling only flips the flag.
+ * A calendar that was deleted in Google is NOT silently re-created: the stored id is cleared, sync stays off, and
+ * the caller gets "calendar_deleted"; the user must enable again explicitly.
+ */
+export async function setGoogleCalendarEnabled(uid: string, connectionId: string, enabled: boolean): Promise<GoogleCalendarConnection> {
+  const ref = googleConnectionsRef(uid).doc(connectionId);
   const snap = await ref.get();
-  if (!snap.exists && enabled) {
-    throw new GoogleConnectionError("not_found", "This Google connection is not configured yet.");
+  if (!snap.exists || !hasUsableToken(snap.data())) {
+    throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const previous = snap.exists ? snap.data()! : null;
 
-  if (enabled) {
-    const accessToken = await getAccessTokenForConnection(uid, id, "calendar");
-    const calendar = await getOrCreateStudyLampCalendar(accessToken, "Study Lamp goals");
-    const next = {
-      calendar: { enabled: true },
-      enabled: true,
-      calendarId: calendar.id,
-      calendarName: calendar.summary || "Study Lamp goals",
-      updatedAt: now as any,
-      counts: previous?.counts ?? DEFAULT_COUNTS,
-      createdAt: previous?.createdAt ?? now,
-    };
+  if (!enabled) {
+    await ref.update({ "calendar.enabled": false, updatedAt: now });
+  } else {
+    if (!grantedFeaturesOf(snap.data()!).includes("calendar")) {
+      throw new GoogleConnectionError("scope_missing", "This Google connection does not have calendar access enabled.");
+    }
 
-    await ref.set(next, { merge: true });
-    const saved = await ref.get();
-    const data = saved.data()!;
-    return {
-      id: saved.id,
-      enabled: Boolean(data.calendar?.enabled ?? data.enabled ?? false),
-      calendarId: data.calendarId ?? null,
-      calendarName: data.calendarName ?? null,
-      lastSyncAt: toIso(data.lastSyncAt ?? null),
-      counts: {
-        synced: Number(data.counts?.synced ?? 0),
-        failed: Number(data.counts?.failed ?? 0),
-        remoteDeleted: Number(data.counts?.remoteDeleted ?? 0),
-        noDate: Number(data.counts?.noDate ?? 0),
-        orphaned: Number(data.counts?.orphaned ?? 0),
-      },
-      createdAt: data.createdAt ?? null,
-      updatedAt: data.updatedAt ?? null,
-    };
+    const accessToken = await getAccessTokenForConnection(uid, connectionId, "calendar");
+    const client = createCalendarClient(accessToken);
+    const stored = calendarSettingsFrom(snap.data()!);
+
+    try {
+      const calendar = await ensureStudyLampCalendar(client, stored.calendarId, "Study Lamp goals");
+      await ref.update({
+        "calendar.enabled": true,
+        "calendar.calendarId": calendar.id,
+        "calendar.calendarName": calendar.summary,
+        updatedAt: now,
+      });
+    } catch (error) {
+      if (error instanceof CalendarDeletedError) {
+        await ref.update({ "calendar.enabled": false, "calendar.calendarId": null, "calendar.calendarName": null, updatedAt: now });
+        throw new GoogleConnectionError("calendar_deleted", "The Study Lamp calendar was deleted in Google.");
+      }
+      throw error;
+    }
   }
 
-  const next = {
-    calendar: { enabled: false },
-    enabled: false,
-    updatedAt: now as any,
-    counts: previous?.counts ?? DEFAULT_COUNTS,
-    createdAt: previous?.createdAt ?? now,
-  };
-
-  await ref.set(next, { merge: true });
   const saved = await ref.get();
-  const data = saved.data()!;
-  return {
-    id: saved.id,
-    enabled: Boolean(data.calendar?.enabled ?? data.enabled ?? false),
-    calendarId: data.calendarId ?? null,
-    calendarName: data.calendarName ?? null,
-    lastSyncAt: toIso(data.lastSyncAt ?? null),
-    counts: {
-      synced: Number(data.counts?.synced ?? 0),
-      failed: Number(data.counts?.failed ?? 0),
-      remoteDeleted: Number(data.counts?.remoteDeleted ?? 0),
-      noDate: Number(data.counts?.noDate ?? 0),
-      orphaned: Number(data.counts?.orphaned ?? 0),
-    },
-    createdAt: data.createdAt ?? null,
-    updatedAt: data.updatedAt ?? null,
-  };
+  return calendarConnectionFrom(saved.id, saved.data()!);
 }
 
-export async function getGoogleSyncStatus(uid: string): Promise<GoogleSyncStatus> {
-  const connection = await getGoogleCalendarConnection(uid, "calendar");
+/** Records that a Calendar check/apply ran. Only called from the apply step, never from a preview. */
+export async function touchCalendarLastCheck(uid: string, connectionId: string): Promise<void> {
+  await googleConnectionsRef(uid).doc(connectionId).update({ "calendar.lastCheckAt": admin.firestore.FieldValue.serverTimestamp() });
+}
+
+export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: string | null): Promise<GoogleSyncStatus> {
+  let connection: GoogleCalendarConnection | null = null;
+  try {
+    connection = await getGoogleCalendarConnection(uid, await resolveCalendarConnectionId(uid, requestedConnectionId));
+  } catch (error) {
+    if (!(error instanceof GoogleConnectionError)) throw error;
+  }
   return {
     enabled: Boolean(connection?.enabled),
     calendarName: connection?.calendarName ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
-    counts: connection?.counts ?? DEFAULT_COUNTS,
+    counts: connection?.counts ?? { ...DEFAULT_COUNTS },
   };
 }

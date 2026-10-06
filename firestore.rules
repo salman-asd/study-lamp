@@ -410,8 +410,9 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
-      // Step W3 will store goal↔event mapping docs here. Denied up front so the
-      // mapping can never be read or written by the client SDK.
+      // Goal↔Google mapping docs, one per goal: users/{uid}/googleSync/{goalId}
+      // (see src/lib/server/googleSyncState.ts). Server-only: written and read by
+      // the Admin SDK, so the client SDK can never read or forge a mapping.
       match /googleSync/{mappingId} {
         allow read, write: if false;
       }

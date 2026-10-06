@@ -45,14 +45,16 @@ export async function disconnectGoogleConnection(idToken: string, connectionId: 
   await parseOrThrow(res);
 }
 
-export async function getGoogleSyncStatus(idToken: string): Promise<GoogleSyncStatus> {
-  const res = await fetch("/api/google/sync/status", { headers: authHeaders(idToken) });
+export async function getGoogleSyncStatus(idToken: string, connectionId?: string): Promise<GoogleSyncStatus> {
+  const query = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : "";
+  const res = await fetch(`/api/google/sync/status${query}`, { headers: authHeaders(idToken) });
   const data = await parseOrThrow(res);
   return data as GoogleSyncStatus;
 }
 
-export async function toggleGoogleCalendar(idToken: string, enabled: boolean): Promise<{ ok: true; connection: { id: string; enabled: boolean } }> {
-  const res = await fetch("/api/google/connections/calendar", {
+/** `connectionId` is the real id of the Google connection (from listGoogleConnections). */
+export async function toggleGoogleCalendar(idToken: string, connectionId: string, enabled: boolean): Promise<{ ok: true; connection: { id: string; enabled: boolean } }> {
+  const res = await fetch(`/api/google/connections/${encodeURIComponent(connectionId)}`, {
     method: "PATCH",
     headers: authHeaders(idToken, true),
     body: JSON.stringify({ calendar: { enabled } }),
@@ -61,11 +63,11 @@ export async function toggleGoogleCalendar(idToken: string, enabled: boolean): P
   return data;
 }
 
-export async function planGoogleSync(idToken: string, goalIds?: string[]): Promise<{ planToken: string; items: any[]; counts: any; remaining: number }> {
+export async function planGoogleSync(idToken: string, goalIds?: string[], connectionId?: string): Promise<{ planToken: string; items: any[]; counts: any; remaining: number }> {
   const res = await fetch("/api/google/sync/plan", {
     method: "POST",
     headers: authHeaders(idToken, true),
-    body: JSON.stringify(goalIds && goalIds.length ? { goalIds } : {}),
+    body: JSON.stringify({ ...(goalIds && goalIds.length ? { goalIds } : {}), ...(connectionId ? { connectionId } : {}) }),
   });
   const data = await parseOrThrow(res);
   return data;
@@ -78,6 +80,7 @@ export async function applyGoogleSync(
     accepted: string[];
     resolutions?: Record<string, "use_study_lamp" | "use_google" | "skip">;
     confirmedDestructive?: string[];
+    connectionId?: string;
   },
 ): Promise<{ ok?: boolean; results?: any[]; error?: string }> {
   const res = await fetch("/api/google/sync/apply", {
