@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import { fetchFreshFacebookThumbnail, resolveFacebookRedirectUrl } from "@/lib/video-platforms/facebookGraph";
 import { detectVideoProvider, generateCanonicalUrl } from "@/lib/video-platforms";
 
@@ -35,10 +35,7 @@ async function resolveOne(rawUrl: string): Promise<string | null> {
   return fetchFreshFacebookThumbnail(pageUrl);
 }
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const POST = withAuthedRoute(async ({ req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -73,4 +70,4 @@ export async function POST(req: NextRequest) {
   );
 
   return NextResponse.json({ results }, { headers: { "Cache-Control": "private, no-store" } });
-}
+}, { scope: "facebook-video-thumbnail" });

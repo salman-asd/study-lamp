@@ -1,20 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/server/firebase-admin";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import { logServerError } from "@/lib/server/logError";
 import { isAllowedFacebookUrl, resolveFacebookRedirectUrl, fetchFacebookVideoOEmbed } from "@/lib/video-platforms/facebookGraph";
 import { detectVideoProvider, generateCanonicalUrl, generateFacebookAlternateUrl, generateFacebookOEmbedUrl } from "@/lib/video-platforms";
-
-async function requireAuthenticatedSession(req: NextRequest) {
-  const authHeader = req.headers.get("authorization") || "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-  try {
-    const decoded = await adminAuth.verifyIdToken(match[1]);
-    return decoded.uid;
-  } catch {
-    return null;
-  }
-}
 
 // Runs server-side so short-link redirect resolution has a stable place to
 // live, same as YOUTUBE_API_KEY-backed lookups staying server-side in
@@ -29,12 +17,7 @@ async function requireAuthenticatedSession(req: NextRequest) {
 // oEmbed for that URL — so the client falls back to the same manual-entry
 // UX already used elsewhere for unfetchable metadata, rather than
 // surfacing a scary error for an expected case.
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedSession(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuthedRoute(async ({ req }) => {
   const rawUrl = req.nextUrl.searchParams.get("url");
   if (!rawUrl) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
@@ -55,26 +38,22 @@ export async function GET(req: NextRequest) {
     // oEmbed fine but render a black player.
     let sourceUrl = rawUrl;
     let canonicalUrl = generateCanonicalUrl(rawUrl);
-    console.log(`[facebook-video] input url="${rawUrl}" canonicalUrl="${canonicalUrl ?? "(unresolved)"}"`);
 
     // A short share link normalizes with no canonical URL yet (see
     // FacebookVideoProvider.normalize) — resolve the redirect server-side,
     // then re-run detection against the resolved URL.
     if (!canonicalUrl) {
       const resolved = await resolveFacebookRedirectUrl(rawUrl);
-      console.log(`[facebook-video] resolved short link "${rawUrl}" -> "${resolved ?? "(failed)"}"`);
       if (resolved) {
         const resolvedProvider = detectVideoProvider(resolved);
         if (resolvedProvider?.platform === "facebook") {
           sourceUrl = resolved;
           canonicalUrl = generateCanonicalUrl(resolved);
-          console.log(`[facebook-video] canonicalUrl after redirect="${canonicalUrl ?? "(unresolved)"}"`);
         }
       }
     }
 
     if (!canonicalUrl) {
-      console.warn(`[facebook-video] could not resolve a canonical URL for "${rawUrl}" — falling back to manual entry`);
       return NextResponse.json({ metadata: null, canonicalUrl: null });
     }
 
@@ -87,17 +66,6 @@ export async function GET(req: NextRequest) {
     // always-/watch/ rewrite — is if anything more likely to match what
     // Facebook serves for that specific post.
     const metadata = await fetchFacebookVideoOEmbed(oEmbedUrl, canonicalUrl);
-    console.log(
-      `[facebook-video] metadata for "${canonicalUrl}":`,
-      metadata
-        ? {
-            title: metadata.title,
-            authorName: metadata.authorName,
-            thumbnailUrl: metadata.thumbnailUrl,
-            hasHtml: Boolean(metadata.html),
-          }
-        : null
-    );
 
     // Defensive retry: some Reels' primary shape comes back with nothing
     // usable (oEmbed declines, OG-tag scrape empty) even though the same
@@ -110,10 +78,8 @@ export async function GET(req: NextRequest) {
     if (!metadata || metadata.title === "Untitled video") {
       const alternateUrl = generateFacebookAlternateUrl(sourceUrl);
       if (alternateUrl) {
-        console.log(`[facebook-video] primary metadata for "${canonicalUrl}" came back untitled — retrying via alternate shape "${alternateUrl}"`);
         const alternateMetadata = await fetchFacebookVideoOEmbed(alternateUrl, alternateUrl);
         if (alternateMetadata && alternateMetadata.title !== "Untitled video") {
-          console.log(`[facebook-video] alternate shape produced a usable title for "${canonicalUrl}": "${alternateMetadata.title}"`);
           // Keep the primary thumbnail if the alternate fetch didn't find
           // one of its own — no reason to throw away a working thumbnail
           // just because the title came from a different shape's fetch.
@@ -122,20 +88,16 @@ export async function GET(req: NextRequest) {
             thumbnailUrl: alternateMetadata.thumbnailUrl || metadata?.thumbnailUrl || null,
           };
         } else {
-          console.log(`[facebook-video] alternate shape for "${canonicalUrl}" was no better — keeping primary result`);
         }
       }
     }
 
-    if (finalMetadata && !finalMetadata.thumbnailUrl) {
-      console.warn(`[facebook-video] no usable thumbnail for "${canonicalUrl}" — Graph API has no unauthenticated fallback for a single arbitrary video (see facebookGraph.ts); client falls back to manual thumbnail entry.`);
-    }
     return NextResponse.json({ metadata: finalMetadata, canonicalUrl });
-  } catch (err: any) {
+  } catch (err) {
     // Metadata is best-effort for Facebook (see facebookGraph.ts) — a
     // thrown error here still degrades to manual entry rather than
     // blocking the add-video flow.
-    logServerError(`[facebook-video] unexpected error resolving "${rawUrl}":`, err);
-    return NextResponse.json({ metadata: null, canonicalUrl: null, error: err?.message || "Failed to fetch Facebook video metadata" });
+    logServerError("Facebook video metadata lookup failed", err);
+    return NextResponse.json({ metadata: null, canonicalUrl: null, error: "Failed to fetch Facebook video metadata" });
   }
-}
+}, { scope: "facebook-video" });

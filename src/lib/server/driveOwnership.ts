@@ -62,7 +62,8 @@ export function ownedKey(file: DriveFileRef): string {
   return `${file.connectionId}:${file.fileId}`;
 }
 
-async function queryOwnedFileIds(uid: string, connectionId: string, fileIds: string[]): Promise<string[]> {
+/** Uncached lookup: which of these files does the user still reference? Returns ownedKey strings. */
+export async function queryOwnedFileIds(uid: string, connectionId: string, fileIds: string[]): Promise<string[]> {
   // Videos live nested under users/{uid}/personalPlaylists/{playlistId}/videos/{videoId}.
   // We don't know playlistId, so use a collectionGroup query and confirm the
   // matched doc's path actually belongs to this uid (Firestore collectionGroup

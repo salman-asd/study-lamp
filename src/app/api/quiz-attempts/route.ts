@@ -1,16 +1,11 @@
 import admin from "firebase-admin";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { logServerError } from "@/lib/server/logError";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import { validateQuizAttemptInput } from "@/lib/quizAttempt";
 
-export async function POST(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthedRoute(async ({ uid, req }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -33,4 +28,4 @@ export async function POST(req: NextRequest) {
     logServerError("Failed to save quiz attempt", error);
     return NextResponse.json({ error: "Failed to save quiz attempt." }, { status: 500 });
   }
-}
+}, { scope: "quiz-attempts", preset: "default" });

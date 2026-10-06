@@ -1,31 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/server/firebase-admin";
+import { NextResponse } from "next/server";
 import { fetchExternalPlaylistPreview } from "@/lib/video-platforms/playlist";
-
-async function requireAuthenticatedSession(req: NextRequest) {
-  const authHeader = req.headers.get("authorization") || "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-
-  try {
-    const decoded = await adminAuth.verifyIdToken(match[1]);
-    return decoded.uid;
-  } catch {
-    return null;
-  }
-}
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { logServerError } from "@/lib/server/logError";
 
 // Runs server-side only so the YouTube Data API key is never exposed to the
 // browser. Any signed-in user may call this — both the admin shared-library
 // importer and the personal "My Playlists" importer use it — but it stays
 // behind authentication (rather than fully public) so anonymous traffic
 // can't burn through the server's YouTube Data API quota.
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedSession(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuthedRoute(async ({ req }) => {
   const playlistId = req.nextUrl.searchParams.get("playlistId");
   const rawUrl = req.nextUrl.searchParams.get("url");
 
@@ -53,7 +36,8 @@ export async function GET(req: NextRequest) {
         order: video.order,
       })),
     });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to fetch playlist" }, { status: 500 });
+  } catch (err) {
+    logServerError("YouTube playlist fetch failed", err);
+    return NextResponse.json({ error: "Failed to fetch playlist" }, { status: 500 });
   }
-}
+}, { scope: "youtube-playlist" });

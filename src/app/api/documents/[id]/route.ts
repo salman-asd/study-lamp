@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { logServerError } from "@/lib/server/logError";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { removeThumbnailIfUnreferenced } from "@/lib/server/driveThumbnailPrune";
 
 interface RouteParams {
   params: { id: string };
@@ -32,6 +33,9 @@ export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, param
     const snap = await documentRef.get();
     if (!snap.exists) return NextResponse.json({ error: "Document not found." }, { status: 404 });
 
+    const driveFileId = snap.get("driveFileId");
+    const driveConnectionId = snap.get("driveConnectionId");
+
     // Parent document + quiz/, content/, annotations/ subcollections.
     await adminDb.recursiveDelete(documentRef);
 
@@ -40,6 +44,10 @@ export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ uid, param
     await Promise.allSettled([
       userRef.collection("summaries").doc(`d_${documentId}`).delete(),
       userRef.collection("notes").doc(`d_${documentId}`).delete(),
+      // The server-only thumbnail goes too, unless another record still uses the same Drive file.
+      typeof driveFileId === "string" && typeof driveConnectionId === "string"
+        ? removeThumbnailIfUnreferenced(uid, driveConnectionId, driveFileId)
+        : Promise.resolve(false),
     ]);
 
     return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "private, no-store" } });

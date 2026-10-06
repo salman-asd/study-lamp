@@ -1,3 +1,0 @@
-Delete this file from your repo (it asserts the D14 hotfix 503, which Z2 removes):
-
-  src/app/api/drive/append-apply-hotfix.test.ts

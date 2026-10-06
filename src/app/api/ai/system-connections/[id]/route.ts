@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { logServerError } from "@/lib/server/logError";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import {
   deleteConnection,
   updateConnection,
@@ -11,12 +11,9 @@ interface RouteParams {
   params: { id: string };
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteParams) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+const options = { admin: true, scope: "ai-system-connections" } as const;
 
+export const PATCH = withAuthedRoute<RouteParams["params"]>(async ({ req, params }) => {
   let body: unknown;
   try {
     body = await req.json();
@@ -30,31 +27,26 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const connection = await updateConnection(params.id, body as any);
+    const connection = await updateConnection(params.id, body as Parameters<typeof updateConnection>[1]);
     if (!connection) {
       return NextResponse.json({ error: "Connection not found." }, { status: 404 });
     }
     return NextResponse.json({ connection }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
+  } catch (err) {
     logServerError("Failed to update system AI connection", err);
     return NextResponse.json({ error: "Failed to update connection." }, { status: 500 });
   }
-}
+}, options);
 
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const DELETE = withAuthedRoute<RouteParams["params"]>(async ({ params }) => {
   try {
     const deleted = await deleteConnection(params.id);
     if (!deleted) {
       return NextResponse.json({ error: "Connection not found." }, { status: 404 });
     }
     return NextResponse.json({ success: true }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
+  } catch (err) {
     logServerError("Failed to delete system AI connection", err);
     return NextResponse.json({ error: "Failed to delete connection." }, { status: 500 });
   }
-}
+}, options);

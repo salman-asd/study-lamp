@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { AiServiceError, type AiErrorCode } from "@/lib/ai/errors";
-import { requireAdminUid, requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { isAdminUid, requireAuthenticatedUid } from "@/lib/server/requireAuth";
 import { checkRateLimit, type RateLimitPreset } from "@/lib/server/rateLimit";
 import { logServerError } from "@/lib/server/logError";
 
@@ -55,18 +55,19 @@ export function createAuthedRoute<P = Record<string, never>>(
   authenticate: (req: NextRequest) => Promise<string | null>,
   handler: RouteHandler<P>,
   options: AuthedRouteOptions = {},
+  isAdmin: (uid: string) => Promise<boolean> = isAdminUid,
 ) {
   return async function route(req: NextRequest, context: { params: P }): Promise<Response> {
     const uid = await authenticate(req);
     if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const effectiveUid = options.admin ? await requireAdminUid(req) : uid;
-    if (options.admin && !effectiveUid) {
+    // The token is verified once above; admin routes only add the role check.
+    if (options.admin && !(await isAdmin(uid))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     if (options.scope) {
-      const allowed = checkRateLimit(effectiveUid ?? uid, { scope: options.scope, preset: options.preset, limit: options.limit });
+      const allowed = checkRateLimit(uid, { scope: options.scope, preset: options.preset, limit: options.limit });
       if (!allowed) {
         const retryAfter = options.retryAfterSeconds === undefined ? 60 : options.retryAfterSeconds;
         return NextResponse.json(
@@ -76,7 +77,7 @@ export function createAuthedRoute<P = Record<string, never>>(
       }
     }
 
-    return handler({ uid: effectiveUid ?? uid, req, params: context?.params ?? ({} as P) });
+    return handler({ uid, req, params: context?.params ?? ({} as P) });
   };
 }
 

@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
 import { logServerError } from "@/lib/server/logError";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import { decryptApiKey } from "@/lib/server/aiEncryption";
 import { getConnectionRaw, recordTestResult } from "@/lib/server/systemAiConnections";
 import { validateGeminiConnection } from "@/lib/ai/providers/gemini";
@@ -11,12 +11,7 @@ import { validateGroqConnection } from "@/lib/ai/providers/groq";
 
 interface RouteParams { params: { id: string }; }
 
-export async function POST(req: NextRequest, { params }: RouteParams) {
-  const adminUid = await requireAdminUid(req);
-  if (!adminUid) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const POST = withAuthedRoute<RouteParams["params"]>(async ({ params }) => {
   const connection = await getConnectionRaw(params.id);
   if (!connection) {
     return NextResponse.json({ error: "Connection not found." }, { status: 404 });
@@ -51,4 +46,4 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     { success: result.ok, message: result.message },
     { headers: { "Cache-Control": "private, no-store" } }
   );
-}
+}, { admin: true, scope: "ai-system-connections-test", limit: 20 });

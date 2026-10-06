@@ -137,6 +137,21 @@ describe("document text extraction", () => {
     assert.doesNotMatch(text, /Student 5009/);
   });
 
+  it("caps a 10,000-row XLSX at 5,000 rows per sheet and keeps the sheet label", async () => {
+    const workbook = XLSX.utils.book_new();
+    const rows: string[][] = [];
+    for (let index = 1; index <= 10_000; index += 1) rows.push([`Row ${index}`, String(index)]);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Big");
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+    const text = await extractDocumentText(buffer, "xlsx");
+    const lines = text.split("\n");
+    assert.equal(lines[0], "Sheet: Big");
+    assert.equal(lines.length, 5_001);
+    assert.equal(lines[5_000], "Row 5000\t5000");
+    assert.doesNotMatch(text, /Row 5001\t/);
+  });
+
   it("caps extracted text length", async () => {
     const text = await extractDocumentText(makeDocx("x".repeat(200_100)), "docx");
     assert.equal(text.length, 200_000);

@@ -22,15 +22,19 @@ export async function requireAuthenticatedUid(req: NextRequest): Promise<string 
   }
 }
 
-export async function requireAdminUid(req: NextRequest): Promise<string | null> {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) return null;
-
+/** Role check for an already-authenticated uid (no token verification). */
+export async function isAdminUid(uid: string): Promise<boolean> {
   try {
     const snap = await adminDb.collection("users").doc(uid).get();
     const role = snap.exists ? snap.data()?.role : null;
-    return role === "admin" ? uid : null;
+    return role === "admin";
   } catch {
-    return null;
+    return false;
   }
+}
+
+export async function requireAdminUid(req: NextRequest): Promise<string | null> {
+  const uid = await requireAuthenticatedUid(req);
+  if (!uid) return null;
+  return (await isAdminUid(uid)) ? uid : null;
 }

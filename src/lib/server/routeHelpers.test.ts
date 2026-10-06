@@ -137,4 +137,29 @@ describe("createAuthedRoute", () => {
     assert.equal((await route(request(), { params: {} })).status, 401);
     assert.equal(called, false);
   });
+
+  it("authenticates once for admin routes and returns 403 for non-admins", async () => {
+    let authCalls = 0;
+    let called = false;
+    const authenticate = async () => { authCalls++; return "plain-user"; };
+    const route = createAuthedRoute(authenticate, () => { called = true; return new Response("ok"); }, { admin: true }, async () => false);
+    const response = await route(request(), { params: {} });
+    assert.equal(response.status, 403);
+    assert.equal(authCalls, 1);
+    assert.equal(called, false);
+  });
+
+  it("runs the handler for admins with the authenticated uid", async () => {
+    let authCalls = 0;
+    const route = createAuthedRoute(
+      async () => { authCalls++; return "admin-1"; },
+      ({ uid }) => Response.json({ uid }),
+      { admin: true },
+      async (uid) => uid === "admin-1",
+    );
+    const response = await route(request(), { params: {} });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { uid: "admin-1" });
+    assert.equal(authCalls, 1);
+  });
 });

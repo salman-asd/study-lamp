@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthenticatedUid } from "@/lib/server/requireAuth";
+import { NextResponse } from "next/server";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
 import { searchYouTubePlaylists } from "@/lib/video-platforms/youtubeSearch";
 
 // Server-only so YOUTUBE_API_KEY is never exposed to the browser, same
@@ -7,12 +7,7 @@ import { searchYouTubePlaylists } from "@/lib/video-platforms/youtubeSearch";
 // behind authentication (rather than fully public) so anonymous traffic
 // can't burn through the server's YouTube Data API quota. Used by the
 // roadmap page's "Suggested playlists" section (Phase E3).
-export async function GET(req: NextRequest) {
-  const uid = await requireAuthenticatedUid(req);
-  if (!uid) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuthedRoute(async ({ req }) => {
   const q = req.nextUrl.searchParams.get("q");
   if (!q || !q.trim()) {
     return NextResponse.json({ error: "A search query is required." }, { status: 400 });
@@ -27,4 +22,4 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ playlists }, { headers: { "Cache-Control": "private, no-store" } });
-}
+}, { scope: "youtube-playlist-search" });
