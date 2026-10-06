@@ -15,3 +15,19 @@ describe("document cache revision checks", () => {
     assert.equal(isSameDriveRevision({}, {}), false);
   });
 });
+
+describe("Google-native revision keys (no md5Checksum)", () => {
+  it("treats a null md5 with a changed modifiedTime as a new revision", () => {
+    const cached = { md5Checksum: null, modifiedTime: "2026-10-03T12:00:00.000Z" };
+    assert.equal(isSameDriveRevision(cached, { md5Checksum: null, modifiedTime: "2026-10-04T08:30:00.000Z" }), false);
+  });
+
+  it("reuses the cache when the modifiedTime is unchanged", () => {
+    const cached = { md5Checksum: null, modifiedTime: "2026-10-03T12:00:00.000Z" };
+    assert.equal(isSameDriveRevision(cached, { md5Checksum: null, modifiedTime: "2026-10-03T12:00:00.000Z" }), true);
+  });
+
+  it("never reuses the cache when neither side has a revision", () => {
+    assert.equal(isSameDriveRevision({ md5Checksum: null, modifiedTime: null }, { md5Checksum: null, modifiedTime: null }), false);
+  });
+});

@@ -21,6 +21,10 @@ export function nativeExportMime(mimeType: string): string | null {
   }
 }
 
+export function isGoogleNativeMime(mimeType: string): boolean {
+  return nativeExportMime(mimeType) !== null;
+}
+
 export function buildPickerMimeTypes(kinds: DrivePickerKind[]): string[] {
   return kinds.map((kind) => DRIVE_PICKER_MIME_BY_KIND[kind]).filter(Boolean);
 }

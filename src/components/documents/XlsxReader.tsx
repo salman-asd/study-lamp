@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Download, FileSpreadsheet, Search, Table2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { MAX_XLSX_PREVIEW_BYTES, parseSpreadsheet, readResponseWithLimit, type SpreadsheetSheet } from "@/lib/documentViewerUtils";
+import { driveResponseErrorMessage } from "@/lib/driveErrors";
 import { createThrottle } from "@/lib/throttle";
 
 const PROGRESS_INTERVAL_MS = 1000;
@@ -65,7 +66,7 @@ export function XlsxReader({
     void (async () => {
       try {
         const response = await fetch(sourceUrl, { credentials: "same-origin" });
-        if (!response.ok) throw new Error(response.status === 404 ? "This file is no longer available in Google Drive." : `Couldn't download this Excel workbook (${response.status}).`);
+        if (!response.ok) throw new Error(await driveResponseErrorMessage(response, response.status === 404 ? "This file is no longer available in Google Drive." : `Couldn't download this Excel workbook (${response.status}).`));
         const bytes = await readResponseWithLimit(response, MAX_XLSX_PREVIEW_BYTES, "This Excel workbook");
         const parsed = parseSpreadsheet(bytes);
         if (!active) return;

@@ -31,6 +31,7 @@ import { useSignedDriveThumbnail } from "@/hooks/useSignedDriveThumbnail";
 import { countStudyMaterials, filterAndSortStudyMaterials } from "@/lib/documentFilters";
 import type { StudyMaterialSort, StudyMaterialTypeFilter } from "@/lib/documentFilters";
 import type { DrivePickerKind } from "@/lib/driveMime";
+import { SIZE_PLACEHOLDER, googleNativeLabel } from "@/lib/googleLinks";
 import type { Category, DriveConnectionSummary, PersonalDocument, Tag } from "@/types";
 import { FileText, FileSpreadsheet, LayoutGrid, List, Plus, Presentation, SlidersHorizontal, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -276,7 +277,7 @@ function StudyMaterialsContent() {
                             <span className="line-clamp-2 break-words">{document.title}</span>
                           </Link>
                           <Badge variant="outline" className="shrink-0 gap-1.5">
-                            {TYPE_ICON[document.fileType]}{TYPE_LABEL[document.fileType]}
+                            {TYPE_ICON[document.fileType]}{googleNativeLabel(document.mimeType) ?? TYPE_LABEL[document.fileType]}
                           </Badge>
                         </div>
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -401,7 +402,7 @@ function EmptyState({
 }
 
 function formatFileSize(sizeBytes?: number | null): string {
-  if (sizeBytes == null || !Number.isFinite(sizeBytes)) return "Size unavailable";
+  if (sizeBytes == null || !Number.isFinite(sizeBytes)) return SIZE_PLACEHOLDER;
   if (sizeBytes < 1024) return `${sizeBytes} B`;
   const units = ["KB", "MB", "GB"];
   let size = sizeBytes / 1024;

@@ -15,7 +15,8 @@ import { useDocumentProgress } from "@/hooks/useDocumentProgress";
 import { useDocumentStudy } from "@/hooks/useDocumentStudy";
 import { getPersonalDocumentAnnotations, getPersonalDocumentClient } from "@/lib/firestore/personalDocuments";
 import { getNote, getSummary } from "@/lib/firestore/notes";
-import { getSignedDriveUrls, refreshSignedDriveUrl } from "@/lib/driveClient";
+import { getSignedDriveUrls, refreshGoogleDocumentMeta, refreshSignedDriveUrl } from "@/lib/driveClient";
+import { formatGoogleModified, googleNativeLabel, googleOpenUrl } from "@/lib/googleLinks";
 import type { PersonalDocument } from "@/types";
 import { Download, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -63,6 +64,22 @@ function StudyMaterialDetailContent() {
       }
     })();
   }, [user, documentId, setSummary, setNote, setNotePageNumber, setAnnotations]);
+
+  // Google-native files: check Drive once per open and keep the stored "last changed" time current.
+  const googleNativeId = doc?.googleNative ? doc.id : null;
+  React.useEffect(() => {
+    if (!user || !googleNativeId) return;
+    let active = true;
+    void (async () => {
+      try {
+        const result = await refreshGoogleDocumentMeta(await user.getIdToken(), googleNativeId);
+        if (active && result.changed) setDoc((current) => (current && current.id === googleNativeId ? { ...current, modifiedTime: result.modifiedTime } : current));
+      } catch {
+        // Best effort: the reader shows its own error if the file can't be opened.
+      }
+    })();
+    return () => { active = false; };
+  }, [user, googleNativeId]);
 
   React.useEffect(() => {
     let active = true;
@@ -130,6 +147,9 @@ function StudyMaterialDetailContent() {
   }
 
   const driveViewUrl = `https://drive.google.com/file/d/${doc.driveFileId}/view`;
+  const nativeLabel = doc.googleNative ? googleNativeLabel(doc.mimeType) : null;
+  const googleUrl = doc.googleNative ? googleOpenUrl(doc.mimeType, doc.driveFileId) : null;
+  const lastChanged = doc.googleNative ? formatGoogleModified(doc.modifiedTime) : null;
   const jumpToNotePage = () => { if (study.notePageNumber) setRequestedPage(study.notePageNumber); };
 
   return (
@@ -138,7 +158,7 @@ function StudyMaterialDetailContent() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="break-words font-display text-2xl font-semibold">{doc.title}</h1>
-            <p className="mt-1 text-xs text-muted-foreground">{doc.fileType.toUpperCase()} · Google Drive</p>
+            <p className="mt-1 text-xs text-muted-foreground">{nativeLabel ?? doc.fileType.toUpperCase()} · Google Drive{lastChanged ? ` · Last changed in Google ${lastChanged}` : ""}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <AiLanguagePicker value={study.language} onChange={study.setLanguage} disabled={!study.languageReady || study.generatingSummary || study.generatingQuiz || study.explainingPage} />
@@ -146,6 +166,7 @@ function StudyMaterialDetailContent() {
               <Download className="mr-1.5 h-4 w-4" />Download
             </Button>
             <GoogleAppendMenu doc={doc} />
+            {googleUrl && <Button asChild variant="outline" size="sm"><a href={googleUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" />Open in Google</a></Button>}
             <Button asChild variant="outline" size="sm"><a href={driveViewUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" />Open in Drive</a></Button>
           </div>
         </div>

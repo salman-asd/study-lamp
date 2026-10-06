@@ -47,3 +47,28 @@ describe("signed Drive URLs", () => {
     assert.equal(verifyDriveUrl({ ...base, ...signed, uid: "user-456" }, now), false);
   });
 });
+
+describe("signed Drive URLs for Google exports", () => {
+  const exportInput: DriveSignedUrlInput = { ...base, purpose: "export" };
+
+  it("accepts a valid export signature", () => {
+    const signed = signDriveUrl(exportInput, now);
+    assert.equal(verifyDriveUrl({ ...exportInput, ...signed }, now), true);
+  });
+
+  it("rejects an export signature presented for the wrong purpose", () => {
+    const signed = signDriveUrl(exportInput, now);
+    for (const purpose of ["stream", "download", "export_download"] as const) {
+      assert.equal(verifyDriveUrl({ ...exportInput, ...signed, purpose }, now), false);
+    }
+  });
+
+  it("rejects tampered and expired export URLs", () => {
+    const signed = signDriveUrl(exportInput, now);
+    assert.equal(verifyDriveUrl({ ...exportInput, ...signed, sig: `${signed.sig}x` }, now), false);
+    assert.equal(verifyDriveUrl({ ...exportInput, ...signed, fileId: "0123456789_otherFile" }, now), false);
+    assert.equal(verifyDriveUrl({ ...exportInput, ...signed }, now + 30 * 60 * 1000), false);
+    const download = signDriveUrl({ ...exportInput, purpose: "export_download" }, now);
+    assert.equal(verifyDriveUrl({ ...exportInput, purpose: "export_download", ...download }, now + 10 * 60 * 1000), false);
+  });
+});

@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { nativeExportMime } from "@/lib/driveMime";
+import { DRIVE_ERROR_MESSAGES, classifyDriveExportError, extractGoogleErrorReason, type DriveErrorCode } from "@/lib/driveErrors";
 import {
   buildGoogleAuthUrl,
   exchangeCode,
@@ -192,7 +193,7 @@ export interface DriveFileMeta {
 }
 
 export class DriveApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly code?: DriveErrorCode) {
     super(message);
     this.name = "DriveApiError";
   }
@@ -206,8 +207,9 @@ export async function getFileMetadata(accessToken: string, fileId: string): Prom
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (res.status === 404) {
-    throw new DriveApiError(404, "Drive can't access that file. Pick it again using the connected Google account.");
+    throw new DriveApiError(404, "Drive can't access that file. Pick it again using the connected Google account.", "not_found");
   }
+  if (res.status === 403) throw new DriveApiError(403, DRIVE_ERROR_MESSAGES.permission, "permission");
   if (!res.ok) throw new DriveApiError(res.status, `Unable to read file metadata from Drive (${res.status}).`);
   return res.json();
 }
@@ -404,11 +406,11 @@ export async function exportFile(accessToken: string, fileId: string, exportMime
   const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (res.status === 403) {
-    throw new DriveApiError(403, "This Google file is too large to export from Drive.");
-  }
   if (!res.ok) {
-    throw new DriveApiError(res.status, `Unable to export the Google file (${res.status}).`);
+    // Only the machine-readable reason is read from Google's body; the body itself is never kept or logged.
+    const reason = extractGoogleErrorReason(await res.json().catch(() => null));
+    const code = classifyDriveExportError(res.status, reason);
+    throw new DriveApiError(res.status, DRIVE_ERROR_MESSAGES[code], code);
   }
   return res;
 }

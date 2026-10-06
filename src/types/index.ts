@@ -625,6 +625,8 @@ export interface PersonalDocument {
   fileType: DocumentFileType;
   mimeType: string;
   googleNative?: boolean;
+  /** Drive modifiedTime (ISO). For Google-native files this is the "last changed in Google" time. */
+  modifiedTime?: string | null;
   sizeBytes?: number | null;
   driveFileId: string;
   driveConnectionId: string;

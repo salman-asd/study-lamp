@@ -74,3 +74,20 @@ describe("chunkForBatches", () => {
     assert.throws(() => chunkForBatches([1], 1, 1));
   });
 });
+
+describe("partitionDriveFiles with Google-native files", () => {
+  it("imports native Docs and Sheets as docx/xlsx with googleNative set, and skips Slides", () => {
+    const result = partitionDriveFiles([
+      { id: "gd1", mimeType: "application/vnd.google-apps.document" },
+      { id: "gs1", mimeType: "application/vnd.google-apps.spreadsheet" },
+      { id: "gp1", mimeType: "application/vnd.google-apps.presentation" },
+      { id: "p1", mimeType: "application/pdf" },
+    ]);
+    assert.deepEqual(result.documents.map(({ file, fileType, googleNative }) => [file.id, fileType, googleNative]), [
+      ["gd1", "docx", true],
+      ["gs1", "xlsx", true],
+      ["p1", "pdf", false],
+    ]);
+    assert.deepEqual(result.skipped, [{ fileId: "gp1", reason: "unsupported_type" }]);
+  });
+});

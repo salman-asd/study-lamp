@@ -47,6 +47,13 @@ export async function getDriveAccessToken(idToken: string, connectionId: string)
   return data.accessToken;
 }
 
+/** Read-only Drive check for a Google Doc/Sheet; updates the stored modifiedTime when it changed. */
+export async function refreshGoogleDocumentMeta(idToken: string, documentId: string): Promise<{ modifiedTime: string | null; changed: boolean }> {
+  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}/refresh`, { method: "POST", headers: authHeaders(idToken) });
+  const data = await parseOrThrow(res);
+  return { modifiedTime: typeof data.modifiedTime === "string" ? data.modifiedTime : null, changed: data.changed === true };
+}
+
 export interface DriveImportResult {
   kind: "video" | "document";
   playlistId?: string;

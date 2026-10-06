@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessTokenForConnection, withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
 import { logServerError } from "@/lib/server/logError";
-import { fetchFileContent } from "@/lib/server/googleDrive";
+import { DriveApiError, exportFile, fetchFileContent, getFileMetadata, nativeExportMime } from "@/lib/server/googleDrive";
+import { DRIVE_ERROR_MESSAGES, driveHttpStatusForCode } from "@/lib/driveErrors";
 import { checkRateLimit } from "@/lib/server/rateLimit";
 import { createDriveTiming, type DriveTiming } from "@/lib/server/timing";
 import { verifyDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
@@ -58,14 +59,10 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
       connectionId,
       async (accessToken) => {
         if (exportPurpose) {
-          const metadata = await import("@/lib/server/googleDrive").then(({ getFileMetadata, nativeExportMime }) => getFileMetadata(accessToken, params.fileId).then((meta) => ({
-            meta,
-            exportMime: nativeExportMime(meta.mimeType),
-          })));
-          if (!metadata.exportMime) {
-            throw new Error("This Drive file isn't a supported Google native document.");
-          }
-          return timing.measure("upstream_ms", () => import("@/lib/server/googleDrive").then(({ exportFile }) => exportFile(accessToken, params.fileId, metadata.exportMime!)));
+          const meta = await getFileMetadata(accessToken, params.fileId);
+          const exportMime = nativeExportMime(meta.mimeType);
+          if (!exportMime) throw new DriveApiError(400, DRIVE_ERROR_MESSAGES.unsupported_type, "unsupported_type");
+          return timing.measure("upstream_ms", () => exportFile(accessToken, params.fileId, exportMime));
         }
         return timing.measure("upstream_ms", () => fetchFileContent(accessToken, params.fileId, req.headers.get("range")));
       },
@@ -82,7 +79,9 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
       if (value) headers.set(key, value);
     }
     const contentType = (upstream.headers.get("content-type") || "application/octet-stream").split(";")[0].trim().toLowerCase();
-    headers.set("Accept-Ranges", "bytes");
+    // Exports are generated on the fly and cannot be range-requested.
+    if (exportPurpose) headers.delete("accept-ranges");
+    else headers.set("Accept-Ranges", "bytes");
     headers.set("Cache-Control", "private, max-age=0, no-store");
     headers.set("X-Content-Type-Options", "nosniff");
     headers.set("Referrer-Policy", "no-referrer");
@@ -92,6 +91,9 @@ async function getStreamResponse(req: NextRequest, params: RouteParams["params"]
 
     return new NextResponse(upstream.body, { status: upstream.status, headers });
   } catch (err) {
+    if (err instanceof DriveApiError && err.code) {
+      return NextResponse.json({ error: DRIVE_ERROR_MESSAGES[err.code], code: err.code }, { status: driveHttpStatusForCode(err.code) });
+    }
     if (err instanceof DriveConnectionError) {
       return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
     }

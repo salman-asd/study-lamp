@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Download, FileText, Minus, Plus, Printer, Type, ZoomIn } from "lucide-react";
 import { MAX_DOCX_PREVIEW_BYTES, readResponseWithLimit } from "@/lib/documentViewerUtils";
+import { driveResponseErrorMessage } from "@/lib/driveErrors";
 import { createThrottle } from "@/lib/throttle";
 
 const MIN_ZOOM_PCT = 60;
@@ -156,7 +157,7 @@ export function DocxReader({
     void (async () => {
       try {
         const response = await fetch(sourceUrl, { credentials: "same-origin" });
-        if (!response.ok) throw new Error(response.status === 404 ? "This file is no longer available in Google Drive." : `Couldn't download this Word document (${response.status}).`);
+        if (!response.ok) throw new Error(await driveResponseErrorMessage(response, response.status === 404 ? "This file is no longer available in Google Drive." : `Couldn't download this Word document (${response.status}).`));
         const bytes = await readResponseWithLimit(response, MAX_DOCX_PREVIEW_BYTES, "This Word document");
         if (!active) return;
         documentBytes.current = bytes;
