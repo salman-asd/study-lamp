@@ -78,3 +78,17 @@ After a clean week: set `CSP_MODE=enforce` in Vercel, redeploy, and recheck the 
 ## Rate limiting
 
 `checkRateLimit` (src/lib/server/rateLimit.ts) keeps its counters in each serverless instance's memory, so the real limit is roughly the configured limit × the number of running instances, and it resets on a cold start; use Upstash Redis (or another shared store) as the upgrade path when you need a hard, global limit.
+
+## The `xlsx` dependency (restricted networks)
+
+`package.json` installs SheetJS from a tarball URL, not from the npm registry:
+`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`. A build machine that can only reach the npm registry
+will fail at `npm install` with a fetch error for `cdn.sheetjs.com`. Options:
+
+1. Allow `cdn.sheetjs.com` on the build network, or
+2. Download the tarball once, commit it (for example `vendor/xlsx-0.20.3.tgz`) and change the dependency to
+   `"xlsx": "file:vendor/xlsx-0.20.3.tgz"`, or
+3. Point your registry mirror at the tarball and keep the URL unchanged.
+
+Type errors such as "Cannot find module 'xlsx'" and "Parameter 'name' implicitly has an 'any' type" in
+`documentText.ts` / `documentViewerUtils.ts` are a symptom of this missing install, not of a code problem.

@@ -428,6 +428,12 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // Quiz attempts already added to a Google Sheet (Z2): users/{uid}/googleExports/{attemptId}_{documentId}.
+      // Server-only: written by markAttemptsExported, read by loadExportedAttemptIds (Admin SDK).
+      match /googleExports/{exportId} {
+        allow read, write: if false;
+      }
+
       // Spent one-time plan tokens (Z3 item 6). Server-only.
       match /googleUsedTokens/{jti} {
         allow read, write: if false;

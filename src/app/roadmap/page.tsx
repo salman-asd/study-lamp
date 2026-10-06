@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { createCategory, listCategories } from "@/lib/firestore/categoriesTags";
 import { listLearningRoadmaps, updateLearningRoadmap, createLearningRoadmap } from "@/lib/firestore/roadmaps";
 import { addGoal } from "@/lib/firestore/goals";
+import { offerCalendarReview } from "@/lib/calendarGoalHook";
+import { useRouter } from "next/navigation";
 import { normalizeUserInterests, setUserInterestLevel, setUserInterestSubtopics } from "@/lib/userInterests";
 import { renumberSteps } from "@/lib/roadmapUtils";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
@@ -37,6 +39,7 @@ export default function RoadmapPage() {
 
 function RoadmapContent() {
   const { user } = useAuth();
+  const router = useRouter();
   const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
   const searchParams = useSearchParams();
   const [categories, setCategories] = React.useState<Category[]>([]);
@@ -216,13 +219,14 @@ function RoadmapContent() {
     if (!user) return;
     const goalTitle = step.title.trim() || `Step ${index + 1}`;
     try {
-      await addGoal(user.uid, {
+      const newGoalId = await addGoal(user.uid, {
         title: goalTitle,
         notes: step.description?.trim() || `From your roadmap step ${index + 1}.`,
         targetDate: defaultGoalTargetDateForStep(step),
         linkedPlaylists: linkedPlaylists.length > 0 ? linkedPlaylists : undefined,
       });
       toast.success(`Added "${goalTitle}" to your Goals.`);
+      void offerCalendarReview(user, newGoalId, () => router.push("/goals?calendarReview=1"));
     } catch (error: any) {
       toast.error(error?.message || "Unable to create a goal for this step.");
     }

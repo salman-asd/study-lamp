@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { trackLearningEvent } from "@/lib/analytics";
+import { CalendarSyncBanner, CalendarSyncReview } from "@/components/sync/CalendarSyncReview";
+import { useCalendarSync } from "@/components/sync/useCalendarSync";
 
 type FilterTab = "all" | "active" | "completed" | "overdue";
 type SortMode = "dueDate" | "priority" | "newest" | "oldest" | "alphabetical";
@@ -116,6 +118,18 @@ function GoalsContent() {
   }, [user]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
+
+  // Google Calendar sync. Every call here is a READ-ONLY check; nothing is written until the user confirms in the review dialog.
+  // After changes are applied the list is reloaded (this page reads goals once, so a pulled change would otherwise stay hidden).
+  const sync = useCalendarSync({ autoCheck: true, onApplied: () => { void refresh(); } });
+  const reviewRequested = searchParams.get("calendarReview") === "1";
+  const reviewOpenedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!reviewRequested || !sync.enabled || reviewOpenedRef.current) return;
+    reviewOpenedRef.current = true;
+    void sync.checkAll({ force: true, openDialog: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewRequested, sync.enabled]);
 
   // A highlighted goal may be filtered out of view or sorted to the bottom,
   // which would make the notification's link silently do nothing. Reset to
@@ -243,9 +257,11 @@ function GoalsContent() {
       if (editingGoal) {
         await updateGoal(user.uid, editingGoal.id, input);
         toast.success("Goal updated");
+        void sync.checkGoal(editingGoal.id);
       } else {
-        await addGoal(user.uid, input);
+        const newGoalId = await addGoal(user.uid, input);
         toast.success("Goal added");
+        void sync.checkGoal(newGoalId);
       }
       setDialogOpen(false);
       refresh();
@@ -258,6 +274,7 @@ function GoalsContent() {
     if (!user) return;
     setGoals((current) => current.map((g) => (g.id === goal.id ? { ...g, completed } : g)));
     await toggleGoal(user.uid, goal.id, completed);
+    void sync.checkGoal(goal.id);
     if (completed) void trackLearningEvent(user.uid, "goal_completed", { goalId: goal.id });
     if (completed) toast.success("Nice work! Goal marked complete.");
   }
@@ -296,6 +313,8 @@ function GoalsContent() {
           </div>
           <Button onClick={openAddDialog} data-tour="g-new"><Plus className="h-4 w-4" /> Add Goal</Button>
         </div>
+
+        <CalendarSyncBanner sync={sync} />
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="g-stats">
           <StatTile icon={Target} label="Total" value={stats.total} loading={loading} />
@@ -581,6 +600,7 @@ function GoalsContent() {
           </form>
         </DialogContent>
       </Dialog>
+      <CalendarSyncReview sync={sync} />
     </AppShell>
   );
 }

@@ -8,6 +8,8 @@ import {
   createCalendarClient,
   ensureStudyLampCalendar,
   eventToGoalFields,
+  calendarSummaryFor,
+  titleAsGoogleHolds,
   CalendarDeletedError,
   GoogleCalendarApiError,
   parseRetryAfterMs,
@@ -37,8 +39,28 @@ function scriptedFetch(replies: Reply[]) {
 
 describe("googleCalendar helpers", () => {
   it("reads a Google event into Study Lamp goal fields and strips the completion marker", () => {
-    const fields = eventToGoalFields({ summary: "✓ Read chapter 2", status: "confirmed", start: { date: "2026-10-10" } });
-    assert.deepEqual(fields, { title: "Read chapter 2", targetDate: "2026-10-10", completed: true, cancelled: false });
+    const fields = eventToGoalFields({ summary: "✓ Read chapter 2", status: "confirmed", start: { date: "2026-10-10" }, end: { date: "2026-10-11" } });
+    assert.deepEqual(fields, { title: "Read chapter 2", targetDate: "2026-10-10", completed: true });
+  });
+
+  it("never guesses: timed, multi-day, cancelled, no/invalid date and blank/overlong titles are attention", () => {
+    const day = { start: { date: "2026-10-10" }, end: { date: "2026-10-11" } };
+    assert.equal(eventToGoalFields({ summary: "A", start: { dateTime: "2026-10-10T09:00:00+06:00" }, end: { dateTime: "2026-10-10T10:00:00+06:00" } }).attention, "timed");
+    assert.equal(eventToGoalFields({ summary: "A", start: { date: "2026-10-10" }, end: { date: "2026-10-13" } }).attention, "multi_day");
+    assert.equal(eventToGoalFields({ summary: "A", status: "cancelled", ...day }).attention, "cancelled");
+    assert.equal(eventToGoalFields({ summary: "A", start: {}, end: {} }).attention, "no_date");
+    assert.equal(eventToGoalFields({ summary: "A", start: { date: "2026-13-40" } }).attention, "invalid_date");
+    assert.equal(eventToGoalFields({ summary: "   ", ...day }).attention, "empty_title");
+    assert.equal(eventToGoalFields({ summary: "x".repeat(501), ...day }).attention, "title_too_long");
+  });
+
+  it("a long goal title round-trips through Google's 200-character summary without looking changed", () => {
+    const long = "L".repeat(300);
+    assert.equal(calendarSummaryFor(long, true).length, 200);
+    const asHeld = titleAsGoogleHolds(long, true);
+    const back = eventToGoalFields({ summary: calendarSummaryFor(long, true), start: { date: "2026-10-10" }, end: { date: "2026-10-11" } });
+    assert.equal(back.attention, undefined);
+    assert.equal(back.title, asHeld);
   });
 
   it("builds a Google all-day event payload with a one-day end date and completion prefix", () => {

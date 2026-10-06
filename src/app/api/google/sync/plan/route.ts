@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/server/firebase-admin";
 import { getAccessTokenForConnection, getGoogleCalendarConnection, resolveCalendarConnectionId } from "@/lib/server/googleConnections";
 import { planCalendarSync, type CalendarPlanReader, type LiveCalendarEvent } from "@/lib/server/goalSyncPlan";
 import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
+import { listIgnoredRemoteIds } from "@/lib/server/googleIgnored";
 import { createCalendarClient } from "@/lib/server/googleCalendar";
 import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 import { readJsonObject, withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -15,7 +16,8 @@ export const maxDuration = 60;
 const EMPTY_PLAN = {
   planToken: "",
   items: [],
-  counts: { push: 0, pull: 0, conflict: 0, attention: 0, remoteDeleted: 0 },
+  counts: { push: 0, pull: 0, conflict: 0, attention: 0, remoteDeleted: 0, orphaned: 0 },
+  orphans: [],
   remaining: 0,
 };
 
@@ -50,6 +52,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
         return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal);
       },
       listMappings: () => listGoalSyncMappings(uid),
+      listIgnoredRemoteIds: () => listIgnoredRemoteIds(uid, "calendar"),
       async listLiveEvents() {
         const listed = await client.listEvents(calendarId, { showDeleted: true });
         const events = listed.items.filter((event): event is LiveCalendarEvent => typeof event.id === "string" && event.id.length > 0);
@@ -58,7 +61,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     };
 
     const plan = await planCalendarSync(reader, { uid, calendarId, goalIds });
-    return NextResponse.json({ planToken: plan.planToken, items: plan.items, counts: plan.counts, remaining: plan.remaining });
+    return NextResponse.json({ planToken: plan.planToken, items: plan.items, counts: plan.counts, orphans: plan.orphans, remaining: plan.remaining });
   } catch (error) {
     return syncErrorResponse("google sync plan", error);
   }

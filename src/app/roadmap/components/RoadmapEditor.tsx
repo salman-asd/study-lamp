@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SortableList } from "@/components/dnd/SortableList";
 import { addGoal } from "@/lib/firestore/goals";
+import { offerCalendarReview } from "@/lib/calendarGoalHook";
+import { useRouter } from "next/navigation";
 import { buildPlaylistSearchQuery, goalDraftTargetDate, parseImportedRoadmapText } from "@/lib/roadmapUtils";
 import { searchPlaylistsForStep, type YouTubePlaylistSearchResult } from "@/lib/roadmapPlaylistClient";
 import { suggestGoalsFromRoadmap, type GoalSuggestion } from "@/lib/goalSuggestionsClient";
@@ -35,6 +37,7 @@ export function RoadmapEditor({
   onCreateGoal: (step: RoadmapStep, index: number, linkedPlaylists: { id: string; title: string }[]) => Promise<void>;
 }) {
   const { user } = useAuth();
+  const router = useRouter();
   const steps = roadmap?.steps ?? [];
   // "Suggest goals" has its own picker: it starts on the saved default and overrides only this generation.
   const { language, languageForRequest, setLanguage, languageReady } = useAiLanguage();
@@ -149,7 +152,7 @@ export function RoadmapEditor({
   async function acceptGoal(suggestion: GoalSuggestion) {
     if (!user) return;
     try {
-      await addGoal(user.uid, {
+      const newGoalId = await addGoal(user.uid, {
         title: suggestion.title,
         notes: suggestion.notes,
         targetDate: goalDraftTargetDate(suggestion.daysFromNow),
@@ -157,6 +160,7 @@ export function RoadmapEditor({
       });
       setGoalSuggestions((prev) => (prev ? prev.filter((item) => item !== suggestion) : prev));
       toast.success(`Added "${suggestion.title}" to your Goals.`);
+      void offerCalendarReview(user, newGoalId, () => router.push("/goals?calendarReview=1"));
     } catch (error: any) {
       toast.error(error?.message || "Unable to add this goal.");
     }

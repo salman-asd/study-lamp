@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { nativeExportMime } from "@/lib/driveMime";
 import {
   buildGoogleAuthUrl,
   exchangeCode,
@@ -378,16 +379,8 @@ export const SUPPORTED_DOCUMENT_MIME_TYPES = [
   ...NATIVE_GOOGLE_DOCUMENT_MIME_TYPES,
 ];
 
-export function nativeExportMime(mimeType: string): string | null {
-  switch (mimeType) {
-    case "application/vnd.google-apps.document":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "application/vnd.google-apps.spreadsheet":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default:
-      return null;
-  }
-}
+// Single source of truth lives in the pure, shared module (B24).
+export { nativeExportMime };
 
 export function documentFileTypeFromMime(mimeType: string): "pdf" | "docx" | "pptx" | "xlsx" | null {
   if (mimeType === "application/pdf") return "pdf";

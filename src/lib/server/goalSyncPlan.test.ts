@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import type { Goal } from "@/types";
+import { addDaysToIsoDate } from "@/lib/isoDate";
 import { buildCalendarEventId } from "./googleCalendar";
 import {
   buildGoalSyncPlan,
@@ -29,13 +30,14 @@ function liveEvent(goalId: string, title: string, date: string, extra: Partial<L
     status: "confirmed",
     summary: title,
     start: { date },
-    end: { date },
+    // Google ends an all-day event on the NEXT day.
+    end: { date: addDaysToIsoDate(date, 1) },
     extendedProperties: { private: { studylampGoalId: goalId, uid: UID } },
     ...extra,
   };
 }
 
-function mappingFor(goalId: string, base: { title: string; targetDate: string }, extra: { calendarId?: string; eventId?: string } = {}): GoalSyncMapping {
+function mappingFor(goalId: string, base: { title: string; targetDate: string; completed?: boolean }, extra: { calendarId?: string; eventId?: string; status?: "synced" | "unlinked" } = {}): GoalSyncMapping {
   return {
     goalId,
     titleSnapshot: base.title,
@@ -44,17 +46,30 @@ function mappingFor(goalId: string, base: { title: string; targetDate: string },
       calendarId: extra.calendarId ?? CAL,
       eventId: extra.eventId ?? buildCalendarEventId(UID, goalId),
       remoteEtag: null,
-      base: { ...base, completed: false },
+      base: { title: base.title, targetDate: base.targetDate, completed: base.completed ?? false },
       hash: null,
-      status: "synced",
+      status: extra.status ?? "synced",
       lastSyncAt: null,
       lastErrorCode: null,
     },
   };
 }
 
-function plan(goals: Goal[], events: LiveCalendarEvent[], mappings: GoalSyncMapping[] = []) {
-  return buildGoalSyncPlan({ uid: UID, calendarId: CAL, goals, liveEvents: events, mappings: new Map(mappings.map((m) => [m.goalId, m])) });
+function plan(goals: Goal[], events: LiveCalendarEvent[], mappings: GoalSyncMapping[] = [], extra: { ignored?: string[]; goalIds?: string[] } = {}) {
+  return buildGoalSyncPlan({
+    uid: UID,
+    calendarId: CAL,
+    goals,
+    liveEvents: events,
+    mappings: new Map(mappings.map((m) => [m.goalId, m])),
+    ignoredRemoteIds: new Set(extra.ignored ?? []),
+    goalIds: extra.goalIds,
+  });
+}
+
+/** An event nobody at Study Lamp made: no private marker, a random Google id. */
+function foreignEvent(id: string, title: string, date: string, extra: Partial<LiveCalendarEvent> = {}): LiveCalendarEvent {
+  return { id, etag: `"etag-${id}"`, status: "confirmed", summary: title, start: { date }, end: { date: addDaysToIsoDate(date, 1) }, ...extra };
 }
 
 describe("goalSyncPlan (realistic ids)", () => {
@@ -126,7 +141,8 @@ describe("goalSyncPlan (realistic ids)", () => {
       [mappingFor("g1", { title: "Read chapter 2", targetDate: "2026-10-10" })],
     );
     assert.equal(result.items[0].kind, "conflict");
-    assert.deepEqual(result.items[0].fields, [{ name: "targetDate", before: "2026-10-12", after: "2026-10-14", direction: "study_lamp" }]);
+    // No direction: the user picks a side per field. Both values travel with the field.
+    assert.deepEqual(result.items[0].fields, [{ name: "targetDate", before: "2026-10-14", after: "2026-10-12", local: "2026-10-14", remote: "2026-10-12" }]);
     assert.equal(result.counts.conflict, 1);
   });
 
@@ -157,14 +173,15 @@ describe("goalSyncPlan (realistic ids)", () => {
     assert.equal(result.items[0].kind, "push_create");
   });
 
-  it("a cancelled event becomes a destructive remote_deleted item", () => {
+  it("a cancelled event becomes a remote_deleted item", () => {
     const result = plan(
       [goal("g1", "Read chapter 2", "2026-10-10")],
       [liveEvent("g1", "Read chapter 2", "2026-10-10", { status: "cancelled" })],
       [mappingFor("g1", { title: "Read chapter 2", targetDate: "2026-10-10" })],
     );
     assert.equal(result.items[0].kind, "remote_deleted");
-    assert.equal(result.items[0].risk, "destructive");
+    // Destructive only for the "delete the goal here" CHOICE (enforced by the gate), not for unlink or recreate.
+    assert.equal(result.items[0].risk, "normal");
     assert.equal(result.counts.remoteDeleted, 1);
   });
 
@@ -209,7 +226,11 @@ describe("planCalendarSync (preview use-case)", () => {
     const reader = {
       listGoals: async () => [goal("g1", "Read chapter 2", "2026-10-10"), goal("g2", "Read chapter 3", "2026-10-11")],
       listMappings: async () => new Map([["g2", mappingFor("g2", { title: "Read chapter 3", targetDate: "2026-10-11" })]]),
-      listLiveEvents: async () => ({ events: [liveEvent("g2", "Read chapter 3", "2026-10-13")], truncated }),
+      listLiveEvents: async () => ({ events: [liveEvent("g2", "Read chapter 3", "2026-10-13"), foreignEvent("abc123foreign", "Team lunch", "2026-10-20")], truncated }),
+      listIgnoredRemoteIds: async () => new Set<string>(),
+      ignoreRemote: async () => { writes.push("ignoreRemote"); },
+      createGoalFromEvent: async () => { writes.push("createGoalFromEvent"); },
+      deleteGoal: async () => { writes.push("deleteGoal"); },
       saveMapping: async () => { writes.push("saveMapping"); },
       saveCalendarMapping: async () => { writes.push("saveCalendarMapping"); },
       insertEvent: async () => { writes.push("insertEvent"); },
@@ -218,13 +239,13 @@ describe("planCalendarSync (preview use-case)", () => {
       pullGoalFields: async () => { writes.push("pullGoalFields"); },
       touchLastCheck: async () => { writes.push("touchLastCheck"); },
     };
-    return { reader: reader as CalendarPlanReader, writes };
+    return { reader: reader as unknown as CalendarPlanReader, writes };
   }
 
   it("performs zero writes (Rule 15)", async () => {
     const { reader, writes } = recordingReader();
     const result = await planCalendarSync(reader, { uid: UID, calendarId: CAL });
-    assert.deepEqual(result.items.map((i) => i.kind).sort(), ["pull_update", "push_create"]);
+    assert.deepEqual(result.items.map((i) => i.kind).sort(), ["pull_create", "pull_update", "push_create"]);
     assert.deepEqual(writes, []);
   });
 
@@ -238,5 +259,133 @@ describe("planCalendarSync (preview use-case)", () => {
     for (const forbidden of ["insertEvent", "patchEvent", "deleteEvent", "createCalendar", "createCalendarClient", "googleSyncState", "saveCalendarMapping", "firebase-admin"]) {
       assert.ok(!source.includes(forbidden), `goalSyncPlan.ts must not reference ${forbidden}`);
     }
+  });
+});
+
+describe("goalSyncPlan — Z4 item kinds", () => {
+  beforeEach(() => { process.env.DRIVE_URL_SIGNING_SECRET = "test-sync-plan-secret"; });
+  const synced = (id: string, title: string, date: string, completed = false) => mappingFor(id, { title, targetDate: date, completed });
+
+  it("completing a goal proposes ONE push_update that adds the ✓ (completed is Study Lamp -> Google)", () => {
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-10", true)], [liveEvent("g1", "Read chapter 2", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10", false)]);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].kind, "push_update");
+    assert.deepEqual(result.items[0].fields, [{ name: "completed", before: false, after: true, direction: "study_lamp" }]);
+  });
+
+  it("a ✓ removed in Google never re-opens the goal and proposes nothing", () => {
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-10", true)], [liveEvent("g1", "Read chapter 2", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10", true)]);
+    assert.equal(result.items.length, 0);
+  });
+
+  it("a ✓ added in Google never completes the goal and proposes nothing", () => {
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-10", false)], [liveEvent("g1", "✓ Read chapter 2", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10", false)]);
+    assert.equal(result.items.length, 0);
+  });
+
+  it("a long title is not mistaken for a Google-side change", () => {
+    const long = "L".repeat(300);
+    const result = plan([goal("g1", long, "2026-10-10")], [liveEvent("g1", "L".repeat(200), "2026-10-10")], [synced("g1", long, "2026-10-10")]);
+    assert.equal(result.items.length, 0);
+  });
+
+  it("title changed in Google and date changed in Study Lamp is ONE item with a direction per field", () => {
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-14")], [liveEvent("g1", "Read chapter 2b", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10")]);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].kind, "pull_update");
+    assert.deepEqual(result.items[0].fields.map((f) => [f.name, f.direction]), [["title", "google"], ["targetDate", "study_lamp"]]);
+  });
+
+  it("only the conflicting field has no direction; the other field keeps its own", () => {
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-14")], [liveEvent("g1", "Read chapter 2b", "2026-10-12")], [synced("g1", "Read chapter 2", "2026-10-10")]);
+    assert.equal(result.items[0].kind, "conflict");
+    const date = result.items[0].fields.find((f) => f.name === "targetDate")!;
+    assert.equal(date.direction, undefined);
+    assert.deepEqual([date.local, date.remote], ["2026-10-14", "2026-10-12"]);
+  });
+
+  it("a timed event in the Study Lamp calendar is an attention item with a reason, not an import", () => {
+    const timed = foreignEvent("timed1", "Dentist", "2026-10-10", { start: { dateTime: "2026-10-10T09:00:00+06:00" }, end: { dateTime: "2026-10-10T10:00:00+06:00" } });
+    const result = plan([], [timed]);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].kind, "attention");
+    assert.equal(result.items[0].reason, "timed");
+    assert.equal(result.items[0].goalId, null);
+    assert.equal(result.counts.attention, 1);
+  });
+
+  it("an unmarked all-day event becomes a pull_create (import as goal)", () => {
+    const result = plan([], [foreignEvent("abc123foreign", "Team lunch", "2026-10-20")]);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].kind, "pull_create");
+    assert.equal(result.items[0].title, "Team lunch");
+    assert.equal(result.items[0].remoteId, "abc123foreign");
+    assert.equal(result.items[0].goalId, null);
+  });
+
+  it("an ignored event is never offered again, as an import or as attention", () => {
+    const timed = foreignEvent("timed1", "Dentist", "2026-10-10", { start: { dateTime: "2026-10-10T09:00:00+06:00" }, end: { dateTime: "2026-10-10T10:00:00+06:00" } });
+    const result = plan([], [foreignEvent("abc123foreign", "Team lunch", "2026-10-20"), timed], [], { ignored: ["abc123foreign", "timed1"] });
+    assert.equal(result.items.length, 0);
+  });
+
+  it("an event that belongs to a goal is never offered as an import, even on a partial plan", () => {
+    const g1 = goal("g1", "Read chapter 2", "2026-10-10");
+    const full = plan([g1], [liveEvent("g1", "Read chapter 2", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10")]);
+    assert.equal(full.items.length, 0);
+    const odd = liveEvent("g1", "Read chapter 2", "2026-10-10", { id: "someothereventid123" });
+    const partial = plan([g1, goal("g2", "Other", "2026-10-11")], [odd], [], { goalIds: ["g2"] });
+    assert.equal(partial.items.some((i) => i.kind === "pull_create"), false);
+  });
+
+  it("a partial plan (goalIds) proposes no imports and reports no orphans", () => {
+    const result = plan([goal("g1", "A", "2026-10-10")], [foreignEvent("abc123foreign", "Team lunch", "2026-10-20")], [synced("gone", "Deleted goal", "2026-10-01")], { goalIds: ["g1"] });
+    assert.deepEqual(result.items.map((i) => i.kind), ["push_create"]);
+    assert.equal(result.counts.orphaned, 0);
+  });
+
+  it("an event Study Lamp made for a goal that no longer exists is left alone (not imported)", () => {
+    const result = plan([], [liveEvent("deleted-goal", "Old goal", "2026-10-10")]);
+    assert.equal(result.items.length, 0);
+  });
+
+  it("a cancelled foreign event is history, not an item", () => {
+    assert.equal(plan([], [foreignEvent("abc123foreign", "Team lunch", "2026-10-20", { status: "cancelled" })]).items.length, 0);
+  });
+
+  it("a mapping without a goal is reported as an orphan, never as an item", () => {
+    const result = plan([], [], [synced("gone", "Deleted goal", "2026-10-01")]);
+    assert.equal(result.items.length, 0);
+    assert.equal(result.counts.orphaned, 1);
+    assert.deepEqual(result.orphans.map((o) => o.goalId), ["gone"]);
+  });
+
+  it("an unlinked goal is skipped while Google has no live event, and resumes when the event is back", () => {
+    const g1 = goal("g1", "Read chapter 2", "2026-10-10");
+    const unlinked = mappingFor("g1", { title: "Read chapter 2", targetDate: "2026-10-10" }, { status: "unlinked" });
+    assert.equal(plan([g1], [], [unlinked]).items.length, 0);
+    assert.equal(plan([g1], [liveEvent("g1", "Read chapter 2", "2026-10-10", { status: "cancelled" })], [unlinked]).items.length, 0);
+    const restored = plan([g1], [liveEvent("g1", "Read chapter 2 (restored)", "2026-10-10")], [unlinked]);
+    assert.equal(restored.items.length, 1);
+  });
+
+  it("a multi-day event for a goal is attention (multi_day), never guessed into a date", () => {
+    const multi = liveEvent("g1", "Read chapter 2", "2026-10-10", { end: { date: "2026-10-14" } });
+    const result = plan([goal("g1", "Read chapter 2", "2026-10-10")], [multi], [synced("g1", "Read chapter 2", "2026-10-10")]);
+    assert.equal(result.items[0].kind, "attention");
+    assert.equal(result.items[0].reason, "multi_day");
+  });
+
+  it("a goal whose date was removed locally but still has an event is attention (goal_has_no_date)", () => {
+    const result = plan([goal("g1", "Read chapter 2", null)], [liveEvent("g1", "Read chapter 2", "2026-10-10")], [synced("g1", "Read chapter 2", "2026-10-10")]);
+    assert.equal(result.items[0].reason, "goal_has_no_date");
+  });
+
+  it("Study Lamp's own write does not come back as a change on the next plan", () => {
+    // After apply: the event holds what the goal holds and the base matches.
+    const g1 = goal("g1", "Read chapter 2", "2026-10-14", true);
+    const result = plan([g1], [liveEvent("g1", "✓ Read chapter 2", "2026-10-14")], [synced("g1", "Read chapter 2", "2026-10-14", true)]);
+    assert.equal(result.items.length, 0);
+    assert.equal(result.converged.length, 0);
   });
 });

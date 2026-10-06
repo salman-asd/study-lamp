@@ -88,3 +88,28 @@ see `src/lib/server/aiEncryption.ts`) and stored at
 denied to the client SDK in `firestore.rules`; all access goes through
 `/api/google/*` with the Admin SDK. Key rotation covers this collection (see
 `docs/security.md` and `scripts/reencrypt.ts`).
+
+## Using Calendar sync
+
+Calendar sync is **off** until you turn it on in *Settings → Google Workspace → Sync goals with Calendar*.
+Turning it on creates one calendar, "Study Lamp goals", in your Google account. It never searches for, reads or
+changes your other calendars, and it writes **no events** until you approve changes.
+
+**Check for changes** (and the "N changes ready to review" bar on the Goals page) only *reads*: it compares your
+goals with the events in the Study Lamp calendar and lists what would change. Pressing **Apply** in the review
+dialog is the only thing that writes, and only for the items you ticked. Plans expire after 15 minutes and can be
+applied once.
+
+| What | Direction |
+|---|---|
+| Title, due date | Both ways, after you confirm. If both sides changed the same field, you pick which one wins, per field |
+| Completed | Study Lamp → Google only (a "✓ " in front of the event title). A ✓ added or removed in Google never changes a goal |
+| Notes, priority, playlists | Not sent to Calendar |
+| Deleting | Never synced. If an event is deleted in Google you choose: keep the goal and stop syncing it (default), put the event back, or delete the goal here too (needs its own confirmation) |
+
+Events in the Study Lamp calendar that Study Lamp did not create can be imported as new goals (unticked by default,
+and the Google event is left as it is) or hidden for good with "Don't ask about this event again". Timed events,
+multi-day events and events without a usable title or date are listed as "Not applied" with the reason; they are never
+guessed into a date.
+
+A goal that you "stop syncing" after its event was deleted is skipped until its event exists in Google again.

@@ -20,8 +20,9 @@ export interface GoalInput {
   linkedVideos?: { id: string; playlistId: string; playlistTitle: string; title: string }[];
 }
 
-export async function addGoal(uid: string, input: GoalInput) {
-  await addDoc(goalsCol(uid), {
+/** Returns the new goal's id (so callers can ask Google Calendar sync about exactly this goal). */
+export async function addGoal(uid: string, input: GoalInput): Promise<string> {
+  const ref = await addDoc(goalsCol(uid), {
     title: input.title,
     notes: input.notes || "",
     targetDate: input.targetDate || null,
@@ -33,6 +34,7 @@ export async function addGoal(uid: string, input: GoalInput) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  return ref.id;
 }
 
 /** Edits an existing goal's fields (title, notes, due date, priority, or
