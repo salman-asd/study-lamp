@@ -1,5 +1,6 @@
 import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
-import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleTasksStatus, GoogleWorkspaceFeature } from "@/types";
+import type { RemovalApplyResult, RemovalPreviewResult, RemovalScope, RemovalTarget } from "@/lib/googleRemovalFlow";
+import type { GoogleConnectionSummary, GoogleSyncHistoryEntry, GoogleSyncStatus, GoogleTasksStatus, GoogleWorkspaceFeature } from "@/types";
 
 /** An API failure that keeps the HTTP status and the server's machine-readable `code` (for example "ambiguous"). */
 export class GoogleApiError extends Error {
@@ -263,4 +264,44 @@ export async function applyGoogleAppend(
     body: JSON.stringify({ planToken: input.planToken, accepted: input.accepted, documentId: input.documentId }),
   });
   return parseAppendResponse(res);
+}
+
+// ─── W5: history and explicit removal ───────────────────────────────────────
+
+/** Thrown when the number of items to remove changed between the preview and the confirmation. */
+export class GoogleRemovalCountChangedError extends GoogleApiError {
+  readonly count: number;
+  constructor(message: string, count: number) {
+    super(message, 409, "count_changed");
+    this.name = "GoogleRemovalCountChangedError";
+    this.count = count;
+  }
+}
+
+/** Read-only. The newest sync log entries, newest first. Pass the returned `nextCursor` for the next page. */
+export async function getGoogleSyncHistory(idToken: string, cursor?: string): Promise<{ entries: GoogleSyncHistoryEntry[]; nextCursor: string | null }> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await fetch(`/api/google/sync/history${query}`, { headers: authHeaders(idToken) });
+  return (await parseOrThrow(res)) as { entries: GoogleSyncHistoryEntry[]; nextCursor: string | null };
+}
+
+/** Read-only. Counts what Study Lamp created for one connection (from Study Lamp's own records) and signs a plan token. */
+export async function previewGoogleRemoval(idToken: string, input: { target: RemovalTarget; scope: RemovalScope; connectionId: string }): Promise<RemovalPreviewResult> {
+  const res = await fetch("/api/google/sync/remove/preview", { method: "POST", headers: authHeaders(idToken, true), body: JSON.stringify(input) });
+  return (await parseOrThrow(res)) as RemovalPreviewResult;
+}
+
+/** Deletes the previewed events/tasks. `confirmCount` is the number the user was shown; a different fresh count fails with GoogleRemovalCountChangedError. */
+export async function applyGoogleRemoval(
+  idToken: string,
+  input: { planToken: string; confirmCount: number; target: RemovalTarget; scope: RemovalScope; connectionId: string },
+): Promise<RemovalApplyResult> {
+  const res = await fetch("/api/google/sync/remove", { method: "POST", headers: authHeaders(idToken, true), body: JSON.stringify(input) });
+  if (res.status === 409) {
+    const data = await res.clone().json().catch(() => ({}));
+    if (data && data.code === "count_changed" && typeof data.count === "number") {
+      throw new GoogleRemovalCountChangedError(typeof data.error === "string" ? data.error : "The number of items changed.", data.count);
+    }
+  }
+  return (await parseOrThrow(res)) as RemovalApplyResult;
 }

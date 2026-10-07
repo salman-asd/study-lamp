@@ -2,8 +2,10 @@ import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import {
   hashSyncBase,
+  mappingRemovalAction,
   parseGoalSyncMapping,
   type CalendarMapping,
+  type MappingBlock,
   type GoalSyncMapping,
   type TasksMapping,
   isCreatingFresh,
@@ -156,5 +158,19 @@ export async function beginTasksCreate(
       },
     }, { merge: true });
     return "claimed" as const;
+  });
+}
+
+/**
+ * Removes ONE service's block from a goal's mapping doc (W5), in a transaction. The other service's block stays
+ * (audit M1); the doc itself is deleted only when nothing else lives in it. Own mapping doc only.
+ */
+export async function removeMappingBlock(uid: string, goalId: string, block: MappingBlock): Promise<void> {
+  const ref = googleSyncRef(uid).doc(goalId);
+  await adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const action = mappingRemovalAction(snap.exists ? (snap.data() as { calendar?: unknown; tasks?: unknown }) : null, block);
+    if (action === "delete_doc") tx.delete(ref);
+    else if (action === "delete_block") tx.update(ref, { [block]: admin.firestore.FieldValue.delete() });
   });
 }

@@ -8,8 +8,8 @@ import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
 import { type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
 import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
-import { computeSyncCounts, computeTasksSyncCounts } from "@/lib/server/googleSyncMapping";
-import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus, GoogleTasksConnection, GoogleTasksStatus } from "@/types";
+import { computeSyncCounts, computeTasksSyncCounts, listOrphanMappings } from "@/lib/server/googleSyncMapping";
+import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncOrphan, GoogleSyncStatus, GoogleTasksConnection, GoogleTasksStatus } from "@/types";
 
 const DEFAULT_COUNTS: GoogleSyncCounts = {
   synced: 0,
@@ -412,6 +412,7 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
   }
   // Counts come from our own mapping and goal docs only: no Google call, no write.
   let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  let orphans: GoogleSyncOrphan[] = [];
   if (connection?.enabled && connection.calendarId) {
     const [mappings, goalSnap] = await Promise.all([
       listGoalSyncMappings(uid),
@@ -422,6 +423,7 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
       goals: goalSnap.docs.map((doc) => ({ id: doc.id, targetDate: typeof doc.data().targetDate === "string" ? doc.data().targetDate : null })),
       calendarId: connection.calendarId,
     });
+    orphans = listOrphanMappings({ mappings, goalIds: new Set(goalSnap.docs.map((doc) => doc.id)), block: "calendar", containerId: connection.calendarId });
   }
   return {
     enabled: Boolean(connection?.enabled),
@@ -429,6 +431,7 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
     calendarName: connection?.calendarName ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
     counts,
+    orphans,
   };
 }
 
@@ -546,9 +549,11 @@ export async function getGoogleTasksStatus(uid: string, requestedConnectionId?: 
     if (!(error instanceof GoogleConnectionError) || error.code === "ambiguous") throw error;
   }
   let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  let orphans: GoogleSyncOrphan[] = [];
   if (connection?.enabled && connection.listId) {
     const [mappings, goalIds] = await Promise.all([listMappings(uid), listGoalIds(uid)]);
     counts = computeTasksSyncCounts({ mappings, goalIds: new Set(goalIds), listId: connection.listId });
+    orphans = listOrphanMappings({ mappings, goalIds: new Set(goalIds), block: "tasks", containerId: connection.listId });
   }
-  return { enabled: Boolean(connection?.enabled), connectionId: connection?.id ?? null, listName: connection?.listName ?? null, lastSyncAt: connection?.lastSyncAt ?? null, counts };
+  return { enabled: Boolean(connection?.enabled), connectionId: connection?.id ?? null, listName: connection?.listName ?? null, lastSyncAt: connection?.lastSyncAt ?? null, counts, orphans };
 }

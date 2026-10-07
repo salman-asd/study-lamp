@@ -73,3 +73,19 @@ Every Google write (Calendar, Tasks, Docs, Sheets) goes through preview -> confi
 3. Review Firestore usage (Console → Usage) and Cloud Audit Logs for unusual reads or writes; check AI provider dashboards for unexpected spend.
 4. Remove the leaked file from git **history** (for example `git filter-repo`), not just the latest commit. Rotating is still required, because the old values stay valid until you change them.
 5. Confirm `.gitignore` covers `.env*` (except `.env.example`).
+
+
+## 2c. Plan tokens, one-time use and server-only data (Google sync)
+
+- **Signing.** A plan token is `base64url(payload).HMAC`, signed over the prefix `sync-plan.v1|` with
+  `GOOGLE_SYNC_SIGNING_SECRET` (fallback `DRIVE_URL_SIGNING_SECRET`). The payload holds the user id, a scope
+  (`calendar`, `tasks`, `docs_append`, `sheets_append`, `remove`), the item ids with fingerprints, an expiry (15 min)
+  and a random `jti`. A token for one user or scope is rejected for another.
+- **One-time.** Apply claims the `jti` in a Firestore transaction (`googleUsedTokens/{jti}`) before any write; a second
+  use returns 409. Spent docs are pruned after they expire.
+- **Re-check at apply.** Apply re-reads current data, recomputes the plan and compares each item's fingerprint; a
+  changed item is reported as stale and not written. Content sent to Google is built on the server.
+- **Removal** additionally needs the exact `confirmCount`; a mismatch returns 409 with the fresh count and writes nothing.
+  Only ids from the user's own mapping docs, for one connection and its stored calendar/list, can be deleted.
+- **Server-only collections** (client read/write denied): `googleConnections`, `googleSync`, `googleSyncLog`,
+  `googleIgnored`, `googleUsedTokens`.

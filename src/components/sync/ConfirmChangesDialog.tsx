@@ -128,6 +128,7 @@ const KIND_LABELS: Record<PlanItem["kind"], string> = {
   remote_deleted: "Deleted in Google Calendar",
   attention: "Can't be applied",
   append: "Add to the end of your file",
+  remove: "Remove from Google",
 };
 
 /** "task" for Google Tasks, "event" for Google Calendar: the noun the dialog uses in its sentences. */

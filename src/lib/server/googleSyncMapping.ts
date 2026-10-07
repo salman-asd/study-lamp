@@ -217,3 +217,28 @@ export function mappingRemovalAction(data: { calendar?: unknown; tasks?: unknown
   const other: MappingBlock = block === "calendar" ? "tasks" : "calendar";
   return data[other] ? "delete_block" : "delete_doc";
 }
+
+export const MAX_LISTED_ORPHANS = 50;
+
+/**
+ * Mappings whose goal no longer exists, for ONE service and ONE calendar / task list (W5). Reported only, newest
+ * information first is not needed: the order is by goal id so the list is stable. At most `limit` entries.
+ */
+export function listOrphanMappings(input: {
+  mappings: Map<string, GoalSyncMapping>;
+  goalIds: ReadonlySet<string>;
+  block: MappingBlock;
+  containerId: string | null;
+  limit?: number;
+}): Array<{ goalId: string; titleSnapshot: string }> {
+  if (!input.containerId) return [];
+  const result: Array<{ goalId: string; titleSnapshot: string }> = [];
+  for (const [goalId, mapping] of input.mappings) {
+    if (input.goalIds.has(goalId)) continue;
+    const container = input.block === "calendar" ? mapping.calendar?.calendarId : mapping.tasks?.listId;
+    if (container !== input.containerId) continue;
+    result.push({ goalId, titleSnapshot: mapping.titleSnapshot });
+  }
+  result.sort((a, b) => (a.goalId < b.goalId ? -1 : a.goalId > b.goalId ? 1 : 0));
+  return result.slice(0, input.limit ?? MAX_LISTED_ORPHANS);
+}

@@ -93,3 +93,10 @@ will fail at `npm install` with a fetch error for `cdn.sheetjs.com`. Options:
 
 Type errors such as "Cannot find module 'xlsx'" and "Parameter 'name' implicitly has an 'any' type" in
 `documentText.ts` / `documentViewerUtils.ts` are a symptom of this missing install, not of a code problem.
+
+
+## Google APIs to enable (Calendar, Tasks, Docs, Sheets)
+
+In the Google Cloud project: **APIs & Services -> Library** and enable **Google Calendar API**, **Google Tasks API**,
+**Google Docs API** and **Google Sheets API** (plus Drive API for Drive). Calendar and Tasks use the Workspace OAuth
+client; Docs and Sheets write-back uses the Drive connection (`drive.file`). See `docs/google-workspace.md`.

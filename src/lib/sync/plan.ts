@@ -9,7 +9,8 @@ export type PlanItemKind =
   | "conflict"
   | "remote_deleted"
   | "attention"
-  | "append";
+  | "append"
+  | "remove";
 
 export type PlanRisk = "normal" | "destructive";
 

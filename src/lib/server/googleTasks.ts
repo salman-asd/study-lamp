@@ -6,7 +6,8 @@ import type { GoogleTaskLike, TaskPayload } from "@/lib/server/tasksGoalMapping"
  * pagination, If-Match, errors that never carry Google's response body.
  *
  * SAFETY: every call takes the stored Study Lamp list id. There is deliberately NO method that lists the user's
- * other task lists, and no delete method (removal is W5). A test pins this method set.
+ * other task lists. deleteTask exists ONLY for the explicit, confirmed removal in W5 (it takes the stored list id
+ * like every other call). A test pins this method set.
  */
 
 export type TasksErrorKind = CalendarErrorKind;
@@ -128,6 +129,8 @@ export interface TasksWriteClient extends TasksReadClient {
   insertTask(listId: string, task: TaskPayload): Promise<GoogleTaskLike>;
   /** `ifMatch` is the etag the caller saw; a mismatch fails with kind "changed_remotely". */
   patchTask(listId: string, taskId: string, updates: TaskPayload, options?: { ifMatch?: string | null }): Promise<GoogleTaskLike>;
+  /** W5 removal only (preview -> confirm -> apply). 404/410 fail with kind "remote_missing"; the caller treats that as already gone. */
+  deleteTask(listId: string, taskId: string): Promise<void>;
 }
 
 export function createTasksClient(accessToken: string, overrides: Partial<CalendarHttpDeps> = {}): TasksWriteClient {
@@ -157,6 +160,9 @@ export function createTasksClient(accessToken: string, overrides: Partial<Calend
     insertTask: (listId, task) => requireBody(tasksRequest<GoogleTaskLike>(accessToken, `${listPath(listId)}/tasks`, { method: "POST", body: task }, deps)),
     patchTask: (listId, taskId, updates, options = {}) =>
       requireBody(tasksRequest<GoogleTaskLike>(accessToken, taskPath(listId, taskId), { method: "PATCH", body: updates, ifMatch: options.ifMatch }, deps)),
+    async deleteTask(listId, taskId) {
+      await tasksRequest<undefined>(accessToken, taskPath(listId, taskId), { method: "DELETE" }, deps);
+    },
   };
 }
 

@@ -18,9 +18,9 @@ const sleeps: number[] = [];
 const base = { sleep: async (ms: number) => { sleeps.push(ms); }, random: () => 0 };
 
 describe("googleTasks client", () => {
-  it("exposes no way to list the user's other lists and no delete", () => {
+  it("exposes no way to list the user's other lists; deleteTask is the only delete (W5 removal)", () => {
     const names = Object.keys(createTasksClient("t")).sort();
-    assert.deepEqual(names, ["createTaskList", "getTask", "getTaskList", "insertTask", "listTasks", "patchTask"]);
+    assert.deepEqual(names, ["createTaskList", "deleteTask", "getTask", "getTaskList", "insertTask", "listTasks", "patchTask"]);
   });
 
   it("every list call goes to the stored list id and asks for completed, hidden and deleted tasks", async () => {
@@ -81,5 +81,18 @@ describe("googleTasks client", () => {
     const gone = { ...ok, getTaskList: async () => { throw new GoogleTasksApiError(404, "remote_missing"); } };
     await assert.rejects(() => ensureStudyLampTaskList(gone, "L1"), TasksListDeletedError);
     assert.equal(created, 1);
+  });
+
+  it("deleteTask: DELETE on the stored list id, 204 is success, 404/410 is remote_missing, no response body in the error", async () => {
+    const ok = fakeFetch([{ status: 204 }]);
+    await createTasksClient("tok", { ...base, fetch: ok.impl }).deleteTask("LIST/1", "task/9");
+    assert.equal(ok.calls[0].method, "DELETE");
+    assert.match(ok.calls[0].url, /\/lists\/LIST%2F1\/tasks\/task%2F9$/);
+
+    const gone = fakeFetch([{ status: 404, body: { error: { message: "private text" } } }]);
+    await assert.rejects(
+      () => createTasksClient("tok", { ...base, fetch: gone.impl }).deleteTask("L", "t"),
+      (error: unknown) => error instanceof GoogleTasksApiError && error.kind === "remote_missing" && !error.message.includes("private"),
+    );
   });
 });
