@@ -5,6 +5,7 @@ import {
   getGoogleCalendarConnection,
   isPlausibleConnectionId,
   setGoogleCalendarEnabled,
+  setGoogleTasksEnabled,
 } from "@/lib/server/googleConnections";
 import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 
@@ -41,18 +42,23 @@ export const PATCH = withAuthedRoute<RouteParams["params"]>(async ({ uid, req, p
   const parsed = await readJsonObject(req);
   if (!parsed.ok) return parsed.response;
 
-  const calendarBlock = parsed.body.calendar;
-  const enabled = calendarBlock && typeof calendarBlock === "object" ? (calendarBlock as { enabled?: unknown }).enabled : undefined;
-  if (typeof enabled !== "boolean") {
+  const flag = (block: unknown): boolean | undefined => {
+    const value = block && typeof block === "object" ? (block as { enabled?: unknown }).enabled : undefined;
+    return typeof value === "boolean" ? value : undefined;
+  };
+  const calendarEnabled = flag(parsed.body.calendar);
+  const tasksEnabled = flag(parsed.body.tasks);
+  if (calendarEnabled === undefined && tasksEnabled === undefined) {
     // A missing flag must never be read as "turn it off".
-    return NextResponse.json({ error: "calendar.enabled must be true or false." }, { status: 400 });
+    return NextResponse.json({ error: "calendar.enabled or tasks.enabled must be true or false." }, { status: 400 });
   }
 
   try {
-    const connection = await setGoogleCalendarEnabled(uid, params.id, enabled);
-    return NextResponse.json({ ok: true, connection });
+    const connection = calendarEnabled === undefined ? undefined : await setGoogleCalendarEnabled(uid, params.id, calendarEnabled);
+    const tasks = tasksEnabled === undefined ? undefined : await setGoogleTasksEnabled(uid, params.id, tasksEnabled);
+    return NextResponse.json({ ok: true, ...(connection ? { connection } : {}), ...(tasks ? { tasks } : {}) });
   } catch (error) {
-    return syncErrorResponse("google calendar toggle", error);
+    return syncErrorResponse("google sync toggle", error);
   }
 }, { scope: "googleSync", preset: "googleSync", limit: 20, tooManyMessage: "Too many connection updates. Please slow down." });
 

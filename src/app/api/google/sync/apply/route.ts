@@ -7,6 +7,7 @@ import { listGoalSyncMappings, recordCalendarMappingError, saveCalendarMapping }
 import { createGoalWithMapping, deleteGoalWithMapping, pullGoalFieldsAtomic } from "@/lib/server/goalSyncStore";
 import { ignoreRemote, listIgnoredRemoteIds } from "@/lib/server/googleIgnored";
 import { saveSyncLogEntry } from "@/lib/server/googleSyncLog";
+import { resolveTasksTarget, runTasksApply } from "@/lib/server/tasksSyncRuntime";
 import { createCalendarClient } from "@/lib/server/googleCalendar";
 import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 import { PlanTokenVerificationError, verifyPlanToken } from "@/lib/server/planToken";
@@ -32,13 +33,19 @@ function readResolutions(value: unknown): Record<string, SyncResolution> {
   return result;
 }
 
+function summarize(results: Array<{ status: "applied" | "stale" | "skipped" | "failed" }>) {
+  const applied = results.filter((result) => result.status === "applied").length;
+  const failed = results.filter((result) => result.status === "failed").length;
+  return { ok: applied > 0 && failed === 0, results, applied, skipped: results.length - applied - failed, failed };
+}
+
 function readStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").slice(0, MAX_LIST) : [];
 }
 
 /**
  * APPLY. Verifies the plan token, re-reads CURRENT goals, mappings and LIVE Google events, recomputes the plan and
- * lets the confirmation gate decide. Content sent to Google is built on the server from stored goals; the request
+ * lets the confirmation gate decide. `target` ("calendar" default | "tasks") picks the plan the token belongs to. Content sent to Google is built on the server from stored goals; the request
  * body only says which plan items the user accepted and how they resolved conflicts.
  */
 export const POST = withAuthedRoute(async ({ uid, req }) => {
@@ -56,8 +63,11 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     return NextResponse.json({ error: "Missing planToken." }, { status: 400 });
   }
 
+  // Each target has its own plan and token. Default stays "calendar" so existing callers are unchanged.
+  const target = body.target === "tasks" ? "tasks" : "calendar";
+
   try {
-    verifyPlanToken(planToken, uid, "calendar");
+    verifyPlanToken(planToken, uid, target);
   } catch (error) {
     if (error instanceof PlanTokenVerificationError) {
       return NextResponse.json({ error: "Invalid or expired plan token." }, { status: 401 });
@@ -70,6 +80,13 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
   }
 
   try {
+    if (target === "tasks") {
+      const tasksTarget = await resolveTasksTarget(uid, requestedConnectionId);
+      if (!tasksTarget) return NextResponse.json({ error: "Google Tasks sync is not enabled." }, { status: 409 });
+      const { results } = await runTasksApply(uid, tasksTarget, { planToken, accepted, resolutions, confirmedDestructive });
+      return NextResponse.json(summarize(results));
+    }
+
     const connectionId = await resolveCalendarConnectionId(uid, requestedConnectionId);
     const connection = await getGoogleCalendarConnection(uid, connectionId);
     if (!connection?.enabled || !connection.calendarId) {
@@ -128,15 +145,7 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
       await touchCalendarLastCheck(uid, connectionId).catch(() => undefined);
     }
 
-    const applied = results.filter((result) => result.status === "applied").length;
-    const failed = results.filter((result) => result.status === "failed").length;
-    return NextResponse.json({
-      ok: applied > 0 && failed === 0,
-      results,
-      applied,
-      skipped: results.length - applied - failed,
-      failed,
-    });
+    return NextResponse.json(summarize(results));
   } catch (error) {
     if (error instanceof PlanTokenVerificationError) {
       return NextResponse.json({ error: "Invalid or expired plan token." }, { status: 401 });

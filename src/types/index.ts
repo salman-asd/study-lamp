@@ -583,6 +583,22 @@ export interface GoogleCalendarConnection {
   updatedAt: FirestoreTimeValue;
 }
 
+export interface GoogleTasksConnection {
+  id: string;
+  enabled: boolean;
+  listId: string | null;
+  listName: string | null;
+  lastSyncAt: string | null;
+}
+
+export interface GoogleTasksStatus {
+  enabled: boolean;
+  connectionId: string | null;
+  listName: string | null;
+  lastSyncAt: string | null;
+  counts: GoogleSyncCounts;
+}
+
 export interface GoogleConnectionSummary {
   id: string;
   googleEmail: string;

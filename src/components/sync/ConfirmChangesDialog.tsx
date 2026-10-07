@@ -16,6 +16,8 @@ export interface ConfirmApplyPayload {
   confirmedDestructive: string[];
 }
 
+export type GoogleServiceName = "Google Calendar" | "Google Tasks";
+
 export interface ConfirmChangesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -26,6 +28,8 @@ export interface ConfirmChangesDialogProps {
   description?: string;
   /** Hides the generic before → after rows (use when renderItemExtra shows the exact content). */
   hideFields?: boolean;
+  /** Which Google service the review is about. Defaults to Calendar so existing callers are unchanged. */
+  service?: GoogleServiceName;
   /** Extra content under each item, e.g. a read-only box with the exact text that will be written. */
   renderItemExtra?: (item: PlanItem) => ReactNode;
   /** A visible error from the last attempt. When absent, an error thrown by onApply is shown instead. */
@@ -88,7 +92,7 @@ export function groupConflictFields(fields: PlanFieldChange[]): {
   return { conflicting, nonConflicting };
 }
 
-const FIELD_LABELS: Record<string, string> = { title: "Title", targetDate: "Due date", completed: "Completed" };
+const FIELD_LABELS: Record<string, string> = { title: "Title", targetDate: "Due date", completed: "Completed", notes: "Notes and priority" };
 
 export function fieldLabel(name: string): string {
   return FIELD_LABELS[name] ?? name;
@@ -101,12 +105,18 @@ export function formatPlanValue(name: string, value: PlanValue | undefined): str
 }
 
 /** One sentence per field, with the direction written in words (never just an arrow). */
-export function describeFieldChange(field: PlanFieldChange): string {
+export function describeFieldChange(field: PlanFieldChange, service: GoogleServiceName = "Google Calendar"): string {
   const label = fieldLabel(field.name);
-  if (field.direction === "study_lamp") return `Google Calendar will change: ${label} ${formatPlanValue(field.name, field.before)} → ${formatPlanValue(field.name, field.after)}`;
+  if (field.direction === "study_lamp") return `${service} will change: ${label} ${formatPlanValue(field.name, field.before)} → ${formatPlanValue(field.name, field.after)}`;
   if (field.direction === "google") return `Study Lamp will change: ${label} ${formatPlanValue(field.name, field.before)} → ${formatPlanValue(field.name, field.after)}`;
   return `${label} is different in both places: Study Lamp has ${formatPlanValue(field.name, field.local)}, Google has ${formatPlanValue(field.name, field.remote)}`;
 }
+
+const TASKS_KIND_LABELS: Partial<Record<PlanItem["kind"], string>> = {
+  push_create: "Add to Google Tasks",
+  push_update: "Update Google Tasks",
+  remote_deleted: "Deleted in Google Tasks",
+};
 
 const KIND_LABELS: Record<PlanItem["kind"], string> = {
   push_create: "Add to Google Calendar",
@@ -119,8 +129,8 @@ const KIND_LABELS: Record<PlanItem["kind"], string> = {
   append: "Add to the end of your file",
 };
 
-export function kindLabel(kind: PlanItem["kind"]): string {
-  return KIND_LABELS[kind];
+export function kindLabel(kind: PlanItem["kind"], service: GoogleServiceName = "Google Calendar"): string {
+  return (service === "Google Tasks" ? TASKS_KIND_LABELS[kind] : undefined) ?? KIND_LABELS[kind];
 }
 
 /** Item ids the user ticked that do nothing yet because every conflicting field is still on "skip". */
@@ -188,6 +198,7 @@ export function ConfirmChangesDialog({
   confirmLabel = "Apply",
   description = "Review the proposed changes before anything is written. Nothing changes until you press Apply.",
   hideFields = false,
+  service = "Google Calendar",
   renderItemExtra,
   errorMessage,
   footerExtra,
@@ -291,7 +302,7 @@ export function ConfirmChangesDialog({
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate font-medium">{item.title}</p>
-                            <p className="text-xs text-muted-foreground">{kindLabel(item.kind)}</p>
+                            <p className="text-xs text-muted-foreground">{kindLabel(item.kind, service)}</p>
                           </div>
                           {isConflict && <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">Conflict</span>}
                           {item.kind === "attention" && <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-700">Not applied</span>}
@@ -308,7 +319,7 @@ export function ConfirmChangesDialog({
 
                         <ul className={cn("mt-2 space-y-1 text-xs text-muted-foreground", hideFields && "hidden")}>
                           {item.fields.map((field) => (
-                            <li key={`${item.itemId}-${field.name}`}>{describeFieldChange(field)}</li>
+                            <li key={`${item.itemId}-${field.name}`}>{describeFieldChange(field, service)}</li>
                           ))}
                         </ul>
 
@@ -346,11 +357,11 @@ export function ConfirmChangesDialog({
 
                         {isDeleted && (
                           <fieldset className="mt-3 rounded-md border bg-muted/30 p-2">
-                            <legend className="px-1 text-xs font-medium text-muted-foreground">This event was deleted in Google. What should Study Lamp do?</legend>
+                            <legend className="px-1 text-xs font-medium text-muted-foreground">{service === "Google Tasks" ? "This task was deleted in Google." : "This event was deleted in Google."} What should Study Lamp do?</legend>
                             <div role="radiogroup" aria-label={`What to do about ${item.title}`} className="space-y-1.5">
                               {([
                                 ["unlink", "Keep the goal and stop syncing it (changes nothing in Google)"],
-                                ["recreate", "Put the event back in Google Calendar"],
+                                ["recreate", service === "Google Tasks" ? "Put the task back in Google Tasks" : "Put the event back in Google Calendar"],
                                 ["delete_goal", "Delete the goal here too"],
                               ] as const).map(([option, label]) => (
                                 <label key={option} className="flex items-start gap-1.5 text-sm">

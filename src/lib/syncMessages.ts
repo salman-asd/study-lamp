@@ -23,11 +23,22 @@ const RESULT_CODE_TEXT: Record<string, string> = {
   invalid_remote_value: "Google's value isn't valid for a goal (for example an empty title), so it was not used.",
   needs_attention: "This event can't be applied. You can hide it from future checks.",
   unsupported_kind: "This kind of change can't be applied.",
+  busy: "Another sync is creating this task right now. Wait a moment and check again.",
+  goal_has_no_title: "The goal has no title, so it can't be put in Google Tasks.",
   writer_error: "Google or Study Lamp couldn't complete this change. Nothing was marked as synced.",
 };
 
-export function describeResultCode(code: string | undefined): string {
+/** Wording that says "task" instead of "event" for Google Tasks. */
+const TASKS_CODE_TEXT: Record<string, string> = {
+  changed_remotely: "The task changed in Google while syncing. Check again.",
+  remote_missing: "The task is no longer in Google Tasks.",
+  remote_unsupported: "Google's version of this task can't be used as a goal (for example its title is empty).",
+  needs_attention: "This task can't be applied.",
+};
+
+export function describeResultCode(code: string | undefined, service: "calendar" | "tasks" = "calendar"): string {
   if (!code) return "";
+  if (service === "tasks" && TASKS_CODE_TEXT[code]) return TASKS_CODE_TEXT[code];
   return RESULT_CODE_TEXT[code] ?? "This change was not applied.";
 }
 

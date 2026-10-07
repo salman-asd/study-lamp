@@ -5,6 +5,8 @@ import {
   parseGoalSyncMapping,
   type CalendarMapping,
   type GoalSyncMapping,
+  type TasksMapping,
+  isCreatingFresh,
 } from "@/lib/server/googleSyncMapping";
 
 /**
@@ -78,4 +80,81 @@ export async function recordCalendarMappingError(uid: string, goalId: string, co
 
 export async function removeGoalSyncMapping(uid: string, goalId: string): Promise<void> {
   await googleSyncRef(uid).doc(goalId).delete();
+}
+
+// ─── Tasks block (W4) ───────────────────────────────────────────────────────
+// Same doc, next to `calendar`. set(..., { merge: true }) merges nested maps, so writing `tasks` never touches `calendar`.
+
+export interface SaveTasksMappingInput {
+  titleSnapshot: string;
+  tasks: Omit<TasksMapping, "hash" | "lastSyncAt" | "lastErrorCode" | "status" | "creatingAt"> & { status?: TasksMapping["status"] };
+}
+
+export function buildTasksMappingDoc(input: SaveTasksMappingInput) {
+  const { tasks } = input;
+  return {
+    titleSnapshot: input.titleSnapshot.slice(0, 500),
+    tasks: {
+      connectionId: tasks.connectionId,
+      listId: tasks.listId,
+      taskId: tasks.taskId,
+      remoteEtag: tasks.remoteEtag,
+      base: tasks.base,
+      notesHash: tasks.notesHash,
+      hash: tasks.base ? hashSyncBase(tasks.base) : null,
+      status: tasks.status ?? "synced",
+      creatingAt: null,
+      lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastErrorCode: null,
+    },
+  };
+}
+
+/** Writes the whole `tasks` block for one goal. Own mapping doc only; never Google, never a goal. */
+export async function saveTasksMapping(uid: string, goalId: string, input: SaveTasksMappingInput): Promise<void> {
+  await googleSyncRef(uid).doc(goalId).set(buildTasksMappingDoc(input), { merge: true });
+}
+
+/** Records a failure code on an EXISTING tasks mapping. A failed row is no longer "busy". Never creates a mapping. */
+export async function recordTasksMappingError(uid: string, goalId: string, code: string): Promise<void> {
+  const ref = googleSyncRef(uid).doc(goalId);
+  const snap = await ref.get();
+  if (!snap.exists || !snap.data()?.tasks) return;
+  await ref.update({ "tasks.status": "failed", "tasks.lastErrorCode": code.slice(0, 60) });
+}
+
+/**
+ * Two-phase create, phase 1 (inside the apply step only): in ONE transaction, claim the goal by writing a
+ * "creating" row with a timestamp. A row younger than 2 minutes means another sync is mid-insert -> "busy".
+ * A stale "creating" row is claimed again; the planner already adopts a task found by its notes marker.
+ */
+export async function beginTasksCreate(
+  uid: string,
+  goalId: string,
+  input: { connectionId: string; listId: string; titleSnapshot: string },
+  now = Date.now(),
+): Promise<"claimed" | "busy"> {
+  const ref = googleSyncRef(uid).doc(goalId);
+  return adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists ? parseGoalSyncMapping(goalId, snap.data())?.tasks : null;
+    if (current?.status === "creating" && isCreatingFresh(current.creatingAt, now)) return "busy" as const;
+    tx.set(ref, {
+      titleSnapshot: input.titleSnapshot.slice(0, 500),
+      tasks: {
+        connectionId: input.connectionId,
+        listId: input.listId,
+        taskId: null,
+        remoteEtag: null,
+        base: null,
+        notesHash: null,
+        hash: null,
+        status: "creating",
+        creatingAt: new Date(now).toISOString(),
+        lastSyncAt: null,
+        lastErrorCode: null,
+      },
+    }, { merge: true });
+    return "claimed" as const;
+  });
 }

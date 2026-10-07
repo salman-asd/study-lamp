@@ -29,10 +29,43 @@ export interface CalendarMapping {
   lastErrorCode: string | null;
 }
 
+/**
+ * Tasks mapping. "creating" is the first half of the two-phase create: the row exists BEFORE tasks.insert is called,
+ * so a crash between insert and save can be recovered by finding the task through its notes marker.
+ */
+export type TasksMappingStatus = "creating" | "synced" | "failed" | "remote_deleted" | "unlinked";
+
+export interface TasksMapping {
+  connectionId: string;
+  listId: string;
+  /** Null while status is "creating" and the insert has not returned yet. */
+  taskId: string | null;
+  remoteEtag: string | null;
+  base: SyncBase | null;
+  /** Fingerprint of the notes + priority last written to Google (they travel Study Lamp -> Google only). */
+  notesHash: string | null;
+  hash: string | null;
+  status: TasksMappingStatus;
+  creatingAt: string | null;
+  lastSyncAt: string | null;
+  lastErrorCode: string | null;
+}
+
+/** A "creating" row younger than this is treated as another sync still in flight ("busy"). */
+export const TASKS_CREATING_STALE_MS = 2 * 60_000;
+
+export function isCreatingFresh(creatingAt: string | null | undefined, now: number, staleMs = TASKS_CREATING_STALE_MS): boolean {
+  if (!creatingAt) return false;
+  const at = Date.parse(creatingAt);
+  return Number.isFinite(at) && now - at < staleMs;
+}
+
 export interface GoalSyncMapping {
   goalId: string;
   titleSnapshot: string;
   calendar: CalendarMapping | null;
+  /** Optional so Calendar-only code and tests keep compiling. */
+  tasks?: TasksMapping | null;
 }
 
 export function hashSyncBase(base: SyncBase): string {
@@ -93,7 +126,45 @@ export function parseGoalSyncMapping(goalId: string, data: unknown): GoalSyncMap
     }
   }
 
-  return { goalId, titleSnapshot: str(raw.titleSnapshot) ?? "", calendar };
+  return { goalId, titleSnapshot: str(raw.titleSnapshot) ?? "", calendar, tasks: parseTasksMapping(raw.tasks) };
+}
+
+function parseTasksMapping(value: unknown): TasksMapping | null {
+  if (!value || typeof value !== "object") return null;
+  const t = value as Record<string, unknown>;
+  const connectionId = str(t.connectionId);
+  const listId = str(t.listId);
+  if (!connectionId || !listId) return null;
+  const status: TasksMappingStatus =
+    t.status === "creating" || t.status === "failed" || t.status === "remote_deleted" || t.status === "unlinked" ? t.status : "synced";
+  return {
+    connectionId,
+    listId,
+    taskId: str(t.taskId),
+    remoteEtag: str(t.remoteEtag),
+    base: parseBase(t.base),
+    notesHash: str(t.notesHash),
+    hash: str(t.hash),
+    status,
+    creatingAt: isoOf(t.creatingAt),
+    lastSyncAt: isoOf(t.lastSyncAt),
+    lastErrorCode: str(t.lastErrorCode),
+  };
+}
+
+/** Counts for the Tasks card: mapping and goal docs only (no Google call). `noDate` is always 0: goals without a date still get a task. */
+export function computeTasksSyncCounts(input: { mappings: Map<string, GoalSyncMapping>; goalIds: Set<string>; listId: string | null }): GoogleSyncCounts {
+  const counts: GoogleSyncCounts = { synced: 0, failed: 0, remoteDeleted: 0, unlinked: 0, noDate: 0, orphaned: 0 };
+  for (const [goalId, mapping] of input.mappings) {
+    const tasks = mapping.tasks;
+    if (!tasks || !input.listId || tasks.listId !== input.listId) continue;
+    if (!input.goalIds.has(goalId)) counts.orphaned += 1;
+    else if (tasks.status === "failed") counts.failed += 1;
+    else if (tasks.status === "unlinked") counts.unlinked += 1;
+    else if (tasks.status === "remote_deleted") counts.remoteDeleted += 1;
+    else if (tasks.status === "synced") counts.synced += 1;
+  }
+  return counts;
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
-import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
+import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleTasksStatus, GoogleWorkspaceFeature } from "@/types";
 
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
@@ -81,6 +81,55 @@ export async function planGoogleSync(idToken: string, goalIds?: string[], connec
   });
   const data = await parseOrThrow(res);
   return data as GoogleSyncPlanResponse;
+}
+
+/** One target's plan inside a plan response (Tasks). Same shape as the Calendar plan, with task ids. */
+export interface GoogleTasksPlanResponse {
+  planToken: string;
+  items: PlanItem[];
+  counts: GoogleSyncPlanResponse["counts"];
+  orphans: Array<{ goalId: string; titleSnapshot: string; taskId: string | null }>;
+  remaining: number;
+}
+
+/** W4. Read-only. Asks only for the Tasks plan. Returns null when Tasks sync is off. */
+export async function planGoogleTasksSync(idToken: string, goalIds?: string[], connectionId?: string): Promise<GoogleTasksPlanResponse | null> {
+  const res = await fetch("/api/google/sync/plan", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ targets: ["tasks"], ...(goalIds && goalIds.length ? { goalIds } : {}), ...(connectionId ? { connectionId } : {}) }),
+  });
+  const data = await parseOrThrow(res);
+  return (data.tasks as GoogleTasksPlanResponse | undefined) ?? null;
+}
+
+/** W4. Carries the TASKS plan token the user just confirmed. */
+export async function applyGoogleTasksSync(
+  idToken: string,
+  input: { planToken: string; accepted: string[]; resolutions?: Record<string, SyncResolution>; confirmedDestructive?: string[]; connectionId?: string },
+): Promise<GoogleSyncApplyResponse> {
+  const res = await fetch("/api/google/sync/apply", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ ...input, target: "tasks" }),
+  });
+  return (await parseOrThrow(res)) as GoogleSyncApplyResponse;
+}
+
+export async function getGoogleTasksStatus(idToken: string, connectionId?: string): Promise<GoogleTasksStatus> {
+  const query = `?target=tasks${connectionId ? `&connectionId=${encodeURIComponent(connectionId)}` : ""}`;
+  const res = await fetch(`/api/google/sync/status${query}`, { headers: authHeaders(idToken) });
+  return (await parseOrThrow(res)) as GoogleTasksStatus;
+}
+
+/** W4. Tasks sync is a separate switch from Calendar sync. Enabling creates the "Study Lamp" list and writes no tasks. */
+export async function toggleGoogleTasks(idToken: string, connectionId: string, enabled: boolean): Promise<void> {
+  const res = await fetch(`/api/google/connections/${encodeURIComponent(connectionId)}`, {
+    method: "PATCH",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ tasks: { enabled } }),
+  });
+  await parseOrThrow(res);
 }
 
 export interface GoogleSyncApplyResult {

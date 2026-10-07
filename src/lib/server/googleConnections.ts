@@ -2,13 +2,14 @@ import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
 import { CalendarDeletedError, createCalendarClient, ensureStudyLampCalendar } from "@/lib/server/googleCalendar";
+import { createTasksClient, ensureStudyLampTaskList, TasksListDeletedError } from "@/lib/server/googleTasks";
 import { refreshWorkspaceAccessToken, revokeWorkspaceToken } from "@/lib/server/googleWorkspaceAuth";
 import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
 import { type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
 import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
-import { computeSyncCounts } from "@/lib/server/googleSyncMapping";
-import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus } from "@/types";
+import { computeSyncCounts, computeTasksSyncCounts } from "@/lib/server/googleSyncMapping";
+import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus, GoogleTasksConnection, GoogleTasksStatus } from "@/types";
 
 const DEFAULT_COUNTS: GoogleSyncCounts = {
   synced: 0,
@@ -129,7 +130,7 @@ export function invalidateAccessToken(uid: string, connectionId: string): void {
 }
 
 export class GoogleConnectionError extends Error {
-  code: "not_found" | "invalid" | "network" | "scope_missing" | "calendar_deleted";
+  code: "not_found" | "invalid" | "network" | "scope_missing" | "calendar_deleted" | "tasks_list_deleted";
   constructor(code: GoogleConnectionError["code"], message: string) {
     super(message);
     this.code = code;
@@ -387,4 +388,109 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
     lastSyncAt: connection?.lastSyncAt ?? null,
     counts,
   };
+}
+
+// ─── Tasks (W4) ─────────────────────────────────────────────────────────────
+
+export interface TasksSettingsView {
+  enabled: boolean;
+  listId: string | null;
+  listName: string | null;
+  lastCheckAt: string | null;
+}
+
+/** Reads the `tasks` block of a connection doc. Pure. */
+export function tasksSettingsFrom(data: FirebaseFirestore.DocumentData): TasksSettingsView {
+  const tasks = data.tasks && typeof data.tasks === "object" ? data.tasks : {};
+  return {
+    enabled: tasks.enabled === true,
+    listId: typeof tasks.listId === "string" && tasks.listId ? tasks.listId : null,
+    listName: typeof tasks.listName === "string" && tasks.listName ? tasks.listName : null,
+    lastCheckAt: toIso(tasks.lastCheckAt ?? null),
+  };
+}
+
+function tasksConnectionFrom(id: string, data: FirebaseFirestore.DocumentData): GoogleTasksConnection {
+  const settings = tasksSettingsFrom(data);
+  return { id, enabled: settings.enabled, listId: settings.listId, listName: settings.listName, lastSyncAt: settings.lastCheckAt };
+}
+
+export async function getGoogleTasksConnection(uid: string, connectionId: string): Promise<GoogleTasksConnection | null> {
+  if (!isPlausibleConnectionId(connectionId)) return null;
+  const snap = await googleConnectionsRef(uid).doc(connectionId).get();
+  const data = snap.data();
+  if (!snap.exists || !hasUsableToken(data)) return null;
+  return tasksConnectionFrom(snap.id, data);
+}
+
+/** Same rule as the Calendar resolver, for the `tasks` permission. */
+export async function resolveTasksConnectionId(uid: string, requestedId?: string | null): Promise<string> {
+  if (requestedId) {
+    if (!isPlausibleConnectionId(requestedId)) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    const snap = await googleConnectionsRef(uid).doc(requestedId).get();
+    if (!snap.exists || !hasUsableToken(snap.data())) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    if (!grantedFeaturesOf(snap.data()!).includes("tasks")) throw new GoogleConnectionError("scope_missing", "This Google connection does not have tasks access enabled.");
+    return snap.id;
+  }
+  const snap = await googleConnectionsRef(uid).get();
+  const candidates = snap.docs.filter((doc) => hasUsableToken(doc.data()) && grantedFeaturesOf(doc.data()).includes("tasks"));
+  if (candidates.length === 0) throw new GoogleConnectionError("not_found", "No Google connection with tasks access was found.");
+  if (candidates.length > 1) throw new GoogleConnectionError("not_found", "Choose which Google connection to use.");
+  return candidates[0].id;
+}
+
+/**
+ * Turns Tasks sync on or off for one connection. Enabling verifies the stored list (tasklists.get) or creates the
+ * "Study Lamp" list (tasklists.insert); it writes no tasks. A list deleted in Google is NOT silently re-created: the
+ * stored id is cleared, sync stays off, and the user must enable again explicitly.
+ */
+export async function setGoogleTasksEnabled(uid: string, connectionId: string, enabled: boolean): Promise<GoogleTasksConnection> {
+  const ref = googleConnectionsRef(uid).doc(connectionId);
+  const snap = await ref.get();
+  if (!snap.exists || !hasUsableToken(snap.data())) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  if (!enabled) {
+    await ref.update({ "tasks.enabled": false, updatedAt: now });
+  } else {
+    if (!grantedFeaturesOf(snap.data()!).includes("tasks")) throw new GoogleConnectionError("scope_missing", "This Google connection does not have tasks access enabled.");
+    const client = createTasksClient(await getAccessTokenForConnection(uid, connectionId, "tasks"));
+    const stored = tasksSettingsFrom(snap.data()!);
+    try {
+      const list = await ensureStudyLampTaskList(client, stored.listId, "Study Lamp");
+      await ref.update({ "tasks.enabled": true, "tasks.listId": list.id, "tasks.listName": list.title, updatedAt: now });
+    } catch (error) {
+      if (error instanceof TasksListDeletedError) {
+        await ref.update({ "tasks.enabled": false, "tasks.listId": null, "tasks.listName": null, updatedAt: now });
+        throw new GoogleConnectionError("tasks_list_deleted", "The Study Lamp task list was deleted in Google.");
+      }
+      throw error;
+    }
+  }
+  const saved = await ref.get();
+  return tasksConnectionFrom(saved.id, saved.data()!);
+}
+
+/** Records that a Tasks apply ran. Only called from the apply step, never from a preview. */
+export async function touchTasksLastCheck(uid: string, connectionId: string): Promise<void> {
+  await googleConnectionsRef(uid).doc(connectionId).update({ "tasks.lastCheckAt": admin.firestore.FieldValue.serverTimestamp() });
+}
+
+/** Counts from our own mapping and goal docs only: no Google call, no write. */
+export async function getGoogleTasksStatus(uid: string, requestedConnectionId?: string | null): Promise<GoogleTasksStatus> {
+  let connection: GoogleTasksConnection | null = null;
+  try {
+    connection = await getGoogleTasksConnection(uid, await resolveTasksConnectionId(uid, requestedConnectionId));
+  } catch (error) {
+    if (!(error instanceof GoogleConnectionError)) throw error;
+  }
+  let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  if (connection?.enabled && connection.listId) {
+    const [mappings, goalSnap] = await Promise.all([
+      listGoalSyncMappings(uid),
+      adminDb.collection("users").doc(uid).collection("goals").select().get(),
+    ]);
+    counts = computeTasksSyncCounts({ mappings, goalIds: new Set(goalSnap.docs.map((doc) => doc.id)), listId: connection.listId });
+  }
+  return { enabled: Boolean(connection?.enabled), connectionId: connection?.id ?? null, listName: connection?.listName ?? null, lastSyncAt: connection?.lastSyncAt ?? null, counts };
 }

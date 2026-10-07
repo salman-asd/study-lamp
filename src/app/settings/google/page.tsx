@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarSyncCard } from "@/components/sync/CalendarSyncCard";
+import { TasksSyncCard } from "@/components/sync/TasksSyncCard";
 import { ConfirmActionDialog } from "@/components/sync/ConfirmActionDialog";
 import { writeCalendarFlag } from "@/lib/googleCalendarFlag";
 import { disconnectGoogleConnection, listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
@@ -249,6 +250,7 @@ function GoogleWorkspaceContent() {
                 </div>
 
                 <CalendarSyncCard connection={connection} onChanged={load} />
+                <TasksSyncCard connection={connection} onChanged={load} />
               </div>
             ))}
           </CardContent>
