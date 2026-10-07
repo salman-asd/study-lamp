@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { createCategory, listCategories } from "@/lib/firestore/categoriesTags";
 import { listLearningRoadmaps, updateLearningRoadmap, createLearningRoadmap } from "@/lib/firestore/roadmaps";
 import { addGoal } from "@/lib/firestore/goals";
-import { offerCalendarReview } from "@/lib/calendarGoalHook";
+import { offerCalendarReview, offerTasksReview } from "@/lib/calendarGoalHook";
 import { useRouter } from "next/navigation";
 import { normalizeUserInterests, setUserInterestLevel, setUserInterestSubtopics } from "@/lib/userInterests";
 import { renumberSteps } from "@/lib/roadmapUtils";
@@ -227,6 +227,7 @@ function RoadmapContent() {
       });
       toast.success(`Added "${goalTitle}" to your Goals.`);
       void offerCalendarReview(user, newGoalId, () => router.push("/goals?calendarReview=1"));
+      void offerTasksReview(user, newGoalId, () => router.push("/goals?tasksReview=1"));
     } catch (error: any) {
       toast.error(error?.message || "Unable to create a goal for this step.");
     }

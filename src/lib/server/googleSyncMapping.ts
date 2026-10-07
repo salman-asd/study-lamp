@@ -29,10 +29,43 @@ export interface CalendarMapping {
   lastErrorCode: string | null;
 }
 
+/**
+ * Tasks mapping. "creating" is the first half of the two-phase create: the row exists BEFORE tasks.insert is called,
+ * so a crash between insert and save can be recovered by finding the task through its notes marker.
+ */
+export type TasksMappingStatus = "creating" | "synced" | "failed" | "remote_deleted" | "unlinked";
+
+export interface TasksMapping {
+  connectionId: string;
+  listId: string;
+  /** Null while status is "creating" and the insert has not returned yet. */
+  taskId: string | null;
+  remoteEtag: string | null;
+  base: SyncBase | null;
+  /** Fingerprint of the notes + priority last written to Google (they travel Study Lamp -> Google only). */
+  notesHash: string | null;
+  hash: string | null;
+  status: TasksMappingStatus;
+  creatingAt: string | null;
+  lastSyncAt: string | null;
+  lastErrorCode: string | null;
+}
+
+/** A "creating" row younger than this is treated as another sync still in flight ("busy"). */
+export const TASKS_CREATING_STALE_MS = 2 * 60_000;
+
+export function isCreatingFresh(creatingAt: string | null | undefined, now: number, staleMs = TASKS_CREATING_STALE_MS): boolean {
+  if (!creatingAt) return false;
+  const at = Date.parse(creatingAt);
+  return Number.isFinite(at) && now - at < staleMs;
+}
+
 export interface GoalSyncMapping {
   goalId: string;
   titleSnapshot: string;
   calendar: CalendarMapping | null;
+  /** Optional so Calendar-only code and tests keep compiling. */
+  tasks?: TasksMapping | null;
 }
 
 export function hashSyncBase(base: SyncBase): string {
@@ -93,7 +126,45 @@ export function parseGoalSyncMapping(goalId: string, data: unknown): GoalSyncMap
     }
   }
 
-  return { goalId, titleSnapshot: str(raw.titleSnapshot) ?? "", calendar };
+  return { goalId, titleSnapshot: str(raw.titleSnapshot) ?? "", calendar, tasks: parseTasksMapping(raw.tasks) };
+}
+
+function parseTasksMapping(value: unknown): TasksMapping | null {
+  if (!value || typeof value !== "object") return null;
+  const t = value as Record<string, unknown>;
+  const connectionId = str(t.connectionId);
+  const listId = str(t.listId);
+  if (!connectionId || !listId) return null;
+  const status: TasksMappingStatus =
+    t.status === "creating" || t.status === "failed" || t.status === "remote_deleted" || t.status === "unlinked" ? t.status : "synced";
+  return {
+    connectionId,
+    listId,
+    taskId: str(t.taskId),
+    remoteEtag: str(t.remoteEtag),
+    base: parseBase(t.base),
+    notesHash: str(t.notesHash),
+    hash: str(t.hash),
+    status,
+    creatingAt: isoOf(t.creatingAt),
+    lastSyncAt: isoOf(t.lastSyncAt),
+    lastErrorCode: str(t.lastErrorCode),
+  };
+}
+
+/** Counts for the Tasks card: mapping and goal docs only (no Google call). `noDate` is always 0: goals without a date still get a task. */
+export function computeTasksSyncCounts(input: { mappings: Map<string, GoalSyncMapping>; goalIds: Set<string>; listId: string | null }): GoogleSyncCounts {
+  const counts: GoogleSyncCounts = { synced: 0, failed: 0, remoteDeleted: 0, unlinked: 0, noDate: 0, orphaned: 0 };
+  for (const [goalId, mapping] of input.mappings) {
+    const tasks = mapping.tasks;
+    if (!tasks || !input.listId || tasks.listId !== input.listId) continue;
+    if (!input.goalIds.has(goalId)) counts.orphaned += 1;
+    else if (tasks.status === "failed") counts.failed += 1;
+    else if (tasks.status === "unlinked") counts.unlinked += 1;
+    else if (tasks.status === "remote_deleted") counts.remoteDeleted += 1;
+    else if (tasks.status === "synced") counts.synced += 1;
+  }
+  return counts;
 }
 
 /**
@@ -132,4 +203,42 @@ export function computeSyncCounts(input: {
   }
 
   return counts;
+}
+
+export type MappingBlock = "calendar" | "tasks";
+
+/**
+ * What deleting ONE service's link from a goal's mapping doc must do (audit M1). The doc holds a `calendar` and a
+ * `tasks` block side by side, so removing the goal's Calendar link must not drop its Tasks link (and the other way
+ * round). "delete_doc": nothing else lives in the doc. "delete_block": the other service's block stays.
+ */
+export function mappingRemovalAction(data: { calendar?: unknown; tasks?: unknown } | null | undefined, block: MappingBlock): "none" | "delete_doc" | "delete_block" {
+  if (!data) return "none";
+  const other: MappingBlock = block === "calendar" ? "tasks" : "calendar";
+  return data[other] ? "delete_block" : "delete_doc";
+}
+
+export const MAX_LISTED_ORPHANS = 50;
+
+/**
+ * Mappings whose goal no longer exists, for ONE service and ONE calendar / task list (W5). Reported only, newest
+ * information first is not needed: the order is by goal id so the list is stable. At most `limit` entries.
+ */
+export function listOrphanMappings(input: {
+  mappings: Map<string, GoalSyncMapping>;
+  goalIds: ReadonlySet<string>;
+  block: MappingBlock;
+  containerId: string | null;
+  limit?: number;
+}): Array<{ goalId: string; titleSnapshot: string }> {
+  if (!input.containerId) return [];
+  const result: Array<{ goalId: string; titleSnapshot: string }> = [];
+  for (const [goalId, mapping] of input.mappings) {
+    if (input.goalIds.has(goalId)) continue;
+    const container = input.block === "calendar" ? mapping.calendar?.calendarId : mapping.tasks?.listId;
+    if (container !== input.containerId) continue;
+    result.push({ goalId, titleSnapshot: mapping.titleSnapshot });
+  }
+  result.sort((a, b) => (a.goalId < b.goalId ? -1 : a.goalId > b.goalId ? 1 : 0));
+  return result.slice(0, input.limit ?? MAX_LISTED_ORPHANS);
 }

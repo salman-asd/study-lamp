@@ -2,13 +2,14 @@ import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { encryptApiKey, decryptApiKey } from "@/lib/server/aiEncryption";
 import { CalendarDeletedError, createCalendarClient, ensureStudyLampCalendar } from "@/lib/server/googleCalendar";
+import { createTasksClient, ensureStudyLampTaskList, TasksListDeletedError, type TasksWriteClient } from "@/lib/server/googleTasks";
 import { refreshWorkspaceAccessToken, revokeWorkspaceToken } from "@/lib/server/googleWorkspaceAuth";
 import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
 import { type GoogleWorkspaceFeature } from "@/lib/server/googleScopes";
 import { listGoalSyncMappings } from "@/lib/server/googleSyncState";
-import { computeSyncCounts } from "@/lib/server/googleSyncMapping";
-import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncStatus } from "@/types";
+import { computeSyncCounts, computeTasksSyncCounts, listOrphanMappings } from "@/lib/server/googleSyncMapping";
+import type { GoogleCalendarConnection, GoogleConnectionSummary, GoogleSyncCounts, GoogleSyncOrphan, GoogleSyncStatus, GoogleTasksConnection, GoogleTasksStatus } from "@/types";
 
 const DEFAULT_COUNTS: GoogleSyncCounts = {
   synced: 0,
@@ -28,6 +29,28 @@ const LAST_USED_WRITE_INTERVAL_MS = 15 * 60_000;
 function googleConnectionsRef(uid: string) {
   return adminDb.collection("users").doc(uid).collection("googleConnections");
 }
+
+/**
+ * A thin seam over the connection docs, so the Tasks functions below can be tested with an in-memory fake (no emulator,
+ * no Firebase). The default talks to Firestore through the Admin SDK exactly as before.
+ */
+export interface ConnectionDocSnap {
+  id: string;
+  exists: boolean;
+  data(): FirebaseFirestore.DocumentData | undefined;
+}
+export interface ConnectionDocStore {
+  get(uid: string, id: string): Promise<ConnectionDocSnap>;
+  list(uid: string): Promise<ConnectionDocSnap[]>;
+  update(uid: string, id: string, patch: Record<string, unknown>): Promise<void>;
+}
+export const firestoreConnectionStore: ConnectionDocStore = {
+  get: (uid, id) => googleConnectionsRef(uid).doc(id).get(),
+  list: async (uid) => (await googleConnectionsRef(uid).get()).docs,
+  async update(uid, id, patch) {
+    await googleConnectionsRef(uid).doc(id).update(patch);
+  },
+};
 
 function cacheKey(uid: string, connectionId: string): string {
   return `${uid}:${connectionId}`;
@@ -128,8 +151,25 @@ export function invalidateAccessToken(uid: string, connectionId: string): void {
   lastUsedWriteAt.delete(key);
 }
 
+/**
+ * Which connection to use when the caller did not name one (audit M2). Pure, so it can be tested without Firestore.
+ *  - one candidate            -> that one (the common case)
+ *  - several, exactly 1 on    -> the one that has the feature turned on
+ *  - several, none on         -> "none": the feature simply is not turned on, which is NOT an error for a check
+ *  - several, 2 or more on    -> "ambiguous": the user must keep it on for only one connection
+ */
+export type DefaultConnectionChoice = { kind: "ok"; id: string } | { kind: "none" } | { kind: "ambiguous" };
+
+export function chooseDefaultConnection(candidates: ReadonlyArray<{ id: string; enabled: boolean }>): DefaultConnectionChoice {
+  if (candidates.length === 0) return { kind: "none" };
+  if (candidates.length === 1) return { kind: "ok", id: candidates[0].id };
+  const enabled = candidates.filter((candidate) => candidate.enabled);
+  if (enabled.length === 1) return { kind: "ok", id: enabled[0].id };
+  return enabled.length === 0 ? { kind: "none" } : { kind: "ambiguous" };
+}
+
 export class GoogleConnectionError extends Error {
-  code: "not_found" | "invalid" | "network" | "scope_missing" | "calendar_deleted";
+  code: "not_found" | "invalid" | "network" | "scope_missing" | "calendar_deleted" | "tasks_list_deleted" | "ambiguous";
   constructor(code: GoogleConnectionError["code"], message: string) {
     super(message);
     this.code = code;
@@ -304,8 +344,10 @@ export async function resolveCalendarConnectionId(uid: string, requestedId?: str
   const snap = await googleConnectionsRef(uid).get();
   const candidates = snap.docs.filter((doc) => hasUsableToken(doc.data()) && grantedFeaturesOf(doc.data()).includes("calendar"));
   if (candidates.length === 0) throw new GoogleConnectionError("not_found", "No Google connection with calendar access was found.");
-  if (candidates.length > 1) throw new GoogleConnectionError("not_found", "Choose which Google connection to use.");
-  return candidates[0].id;
+  const choice = chooseDefaultConnection(candidates.map((doc) => ({ id: doc.id, enabled: calendarSettingsFrom(doc.data()).enabled })));
+  if (choice.kind === "ok") return choice.id;
+  if (choice.kind === "ambiguous") throw new GoogleConnectionError("ambiguous", "More than one Google connection has Calendar sync turned on.");
+  throw new GoogleConnectionError("not_found", "Calendar sync is not turned on for any Google connection.");
 }
 
 /**
@@ -365,10 +407,12 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
   try {
     connection = await getGoogleCalendarConnection(uid, await resolveCalendarConnectionId(uid, requestedConnectionId));
   } catch (error) {
-    if (!(error instanceof GoogleConnectionError)) throw error;
+    // "ambiguous" is NOT swallowed: the caller must tell the user to choose one connection (audit M2).
+    if (!(error instanceof GoogleConnectionError) || error.code === "ambiguous") throw error;
   }
   // Counts come from our own mapping and goal docs only: no Google call, no write.
   let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  let orphans: GoogleSyncOrphan[] = [];
   if (connection?.enabled && connection.calendarId) {
     const [mappings, goalSnap] = await Promise.all([
       listGoalSyncMappings(uid),
@@ -379,6 +423,7 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
       goals: goalSnap.docs.map((doc) => ({ id: doc.id, targetDate: typeof doc.data().targetDate === "string" ? doc.data().targetDate : null })),
       calendarId: connection.calendarId,
     });
+    orphans = listOrphanMappings({ mappings, goalIds: new Set(goalSnap.docs.map((doc) => doc.id)), block: "calendar", containerId: connection.calendarId });
   }
   return {
     enabled: Boolean(connection?.enabled),
@@ -386,5 +431,129 @@ export async function getGoogleSyncStatus(uid: string, requestedConnectionId?: s
     calendarName: connection?.calendarName ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
     counts,
+    orphans,
   };
+}
+
+// ─── Tasks (W4) ─────────────────────────────────────────────────────────────
+
+export interface TasksSettingsView {
+  enabled: boolean;
+  listId: string | null;
+  listName: string | null;
+  lastCheckAt: string | null;
+}
+
+/** Reads the `tasks` block of a connection doc. Pure. */
+export function tasksSettingsFrom(data: FirebaseFirestore.DocumentData): TasksSettingsView {
+  const tasks = data.tasks && typeof data.tasks === "object" ? data.tasks : {};
+  return {
+    enabled: tasks.enabled === true,
+    listId: typeof tasks.listId === "string" && tasks.listId ? tasks.listId : null,
+    listName: typeof tasks.listName === "string" && tasks.listName ? tasks.listName : null,
+    lastCheckAt: toIso(tasks.lastCheckAt ?? null),
+  };
+}
+
+function tasksConnectionFrom(id: string, data: FirebaseFirestore.DocumentData): GoogleTasksConnection {
+  const settings = tasksSettingsFrom(data);
+  return { id, enabled: settings.enabled, listId: settings.listId, listName: settings.listName, lastSyncAt: settings.lastCheckAt };
+}
+
+export async function getGoogleTasksConnection(uid: string, connectionId: string, store: ConnectionDocStore = firestoreConnectionStore): Promise<GoogleTasksConnection | null> {
+  if (!isPlausibleConnectionId(connectionId)) return null;
+  const snap = await store.get(uid, connectionId);
+  const data = snap.data();
+  if (!snap.exists || !hasUsableToken(data)) return null;
+  return tasksConnectionFrom(snap.id, data);
+}
+
+/** Same rule as the Calendar resolver, for the `tasks` permission. */
+export async function resolveTasksConnectionId(uid: string, requestedId?: string | null, store: ConnectionDocStore = firestoreConnectionStore): Promise<string> {
+  if (requestedId) {
+    if (!isPlausibleConnectionId(requestedId)) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    const snap = await store.get(uid, requestedId);
+    if (!snap.exists || !hasUsableToken(snap.data())) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+    if (!grantedFeaturesOf(snap.data()!).includes("tasks")) throw new GoogleConnectionError("scope_missing", "This Google connection does not have tasks access enabled.");
+    return snap.id;
+  }
+  const docs = await store.list(uid);
+  const candidates = docs.filter((doc) => hasUsableToken(doc.data()) && grantedFeaturesOf(doc.data()!).includes("tasks"));
+  if (candidates.length === 0) throw new GoogleConnectionError("not_found", "No Google connection with tasks access was found.");
+  const choice = chooseDefaultConnection(candidates.map((doc) => ({ id: doc.id, enabled: tasksSettingsFrom(doc.data()!).enabled })));
+  if (choice.kind === "ok") return choice.id;
+  if (choice.kind === "ambiguous") throw new GoogleConnectionError("ambiguous", "More than one Google connection has Tasks sync turned on.");
+  throw new GoogleConnectionError("not_found", "Tasks sync is not turned on for any Google connection.");
+}
+
+/**
+ * Turns Tasks sync on or off for one connection. Enabling verifies the stored list (tasklists.get) or creates the
+ * "Study Lamp" list (tasklists.insert); it writes no tasks. A list deleted in Google is NOT silently re-created: the
+ * stored id is cleared, sync stays off, and the user must enable again explicitly.
+ */
+export interface SetTasksEnabledDeps {
+  store?: ConnectionDocStore;
+  /** Builds the Google Tasks client for the connection. Default: refresh the stored token and call the real API. */
+  tasksClient?: (uid: string, connectionId: string) => Promise<Pick<TasksWriteClient, "getTaskList" | "createTaskList">>;
+}
+
+export async function setGoogleTasksEnabled(uid: string, connectionId: string, enabled: boolean, deps: SetTasksEnabledDeps = {}): Promise<GoogleTasksConnection> {
+  const store = deps.store ?? firestoreConnectionStore;
+  const tasksClient = deps.tasksClient ?? (async (clientUid: string, clientConnectionId: string) => createTasksClient(await getAccessTokenForConnection(clientUid, clientConnectionId, "tasks")));
+  const snap = await store.get(uid, connectionId);
+  if (!snap.exists || !hasUsableToken(snap.data())) throw new GoogleConnectionError("not_found", "This Google connection no longer exists.");
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  if (!enabled) {
+    await store.update(uid, connectionId, { "tasks.enabled": false, updatedAt: now });
+  } else {
+    if (!grantedFeaturesOf(snap.data()!).includes("tasks")) throw new GoogleConnectionError("scope_missing", "This Google connection does not have tasks access enabled.");
+    const client = await tasksClient(uid, connectionId);
+    const stored = tasksSettingsFrom(snap.data()!);
+    try {
+      const list = await ensureStudyLampTaskList(client, stored.listId, "Study Lamp");
+      await store.update(uid, connectionId, { "tasks.enabled": true, "tasks.listId": list.id, "tasks.listName": list.title, updatedAt: now });
+    } catch (error) {
+      if (error instanceof TasksListDeletedError) {
+        await store.update(uid, connectionId, { "tasks.enabled": false, "tasks.listId": null, "tasks.listName": null, updatedAt: now });
+        throw new GoogleConnectionError("tasks_list_deleted", "The Study Lamp task list was deleted in Google.");
+      }
+      throw error;
+    }
+  }
+  const saved = await store.get(uid, connectionId);
+  return tasksConnectionFrom(saved.id, saved.data()!);
+}
+
+/** Records that a Tasks apply ran. Only called from the apply step, never from a preview. */
+export async function touchTasksLastCheck(uid: string, connectionId: string): Promise<void> {
+  await googleConnectionsRef(uid).doc(connectionId).update({ "tasks.lastCheckAt": admin.firestore.FieldValue.serverTimestamp() });
+}
+
+/** Counts from our own mapping and goal docs only: no Google call, no write. */
+export interface TasksStatusDeps {
+  store?: ConnectionDocStore;
+  listMappings?: (uid: string) => ReturnType<typeof listGoalSyncMappings>;
+  listGoalIds?: (uid: string) => Promise<string[]>;
+}
+
+export async function getGoogleTasksStatus(uid: string, requestedConnectionId?: string | null, deps: TasksStatusDeps = {}): Promise<GoogleTasksStatus> {
+  const store = deps.store ?? firestoreConnectionStore;
+  const listMappings = deps.listMappings ?? listGoalSyncMappings;
+  const listGoalIds = deps.listGoalIds ?? (async (statusUid: string) => (await adminDb.collection("users").doc(statusUid).collection("goals").select().get()).docs.map((doc) => doc.id));
+  let connection: GoogleTasksConnection | null = null;
+  try {
+    connection = await getGoogleTasksConnection(uid, await resolveTasksConnectionId(uid, requestedConnectionId, store), store);
+  } catch (error) {
+    // "ambiguous" is NOT swallowed: the caller must tell the user to choose one connection (audit M2).
+    if (!(error instanceof GoogleConnectionError) || error.code === "ambiguous") throw error;
+  }
+  let counts: GoogleSyncCounts = { ...DEFAULT_COUNTS };
+  let orphans: GoogleSyncOrphan[] = [];
+  if (connection?.enabled && connection.listId) {
+    const [mappings, goalIds] = await Promise.all([listMappings(uid), listGoalIds(uid)]);
+    counts = computeTasksSyncCounts({ mappings, goalIds: new Set(goalIds), listId: connection.listId });
+    orphans = listOrphanMappings({ mappings, goalIds: new Set(goalIds), block: "tasks", containerId: connection.listId });
+  }
+  return { enabled: Boolean(connection?.enabled), connectionId: connection?.id ?? null, listName: connection?.listName ?? null, lastSyncAt: connection?.lastSyncAt ?? null, counts, orphans };
 }

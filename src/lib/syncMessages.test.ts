@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { describeApplyOutcome, describeAttentionReason, describeResultCode, summarizeApplyResults } from "./syncMessages";
-import { AUTO_CHECK_INTERVAL_MS, countActionableItems, isAutoCheckDue, readCalendarFlag, readLastAutoCheck, writeCalendarFlag, writeLastAutoCheck } from "./googleCalendarFlag";
+import { AUTO_CHECK_INTERVAL_MS, countActionableItems, isAutoCheckDue, cacheSyncStateFromConnections, readCalendarFlag, readLastAutoCheck, readSyncConnectionId, readTasksFlag, syncCacheFromConnections, writeCalendarFlag, writeLastAutoCheck, writeSyncConnectionId, writeTasksFlag } from "./googleCalendarFlag";
 
 describe("syncMessages", () => {
   it("never reports success when something failed", () => {
@@ -70,5 +70,68 @@ describe("googleCalendarFlag", () => {
 
   it("doesn't count attention items as changes ready", () => {
     assert.equal(countActionableItems([{ kind: "push_create" }, { kind: "attention" }, { kind: "conflict" }]), 2);
+  });
+});
+
+describe("Google Tasks wording (audit L3)", () => {
+  const reasons = ["timed", "multi_day", "cancelled", "no_date", "invalid_date", "empty_title", "title_too_long", "goal_has_no_date"] as const;
+
+  it("attention reasons for Tasks never say event or calendar", () => {
+    for (const reason of reasons) {
+      const text = describeAttentionReason(reason, "tasks");
+      assert.ok(text.length > 10, reason);
+      assert.doesNotMatch(text, /event|calendar/i, reason);
+    }
+  });
+
+  it("Calendar wording is unchanged by default", () => {
+    assert.match(describeAttentionReason("cancelled"), /event/);
+    assert.match(describeAttentionReason("goal_has_no_date", "calendar"), /calendar event/);
+  });
+
+  it("result codes for Tasks say task, not event", () => {
+    for (const code of ["changed_remotely", "remote_missing", "remote_unsupported", "needs_attention", "remote_cancelled"]) {
+      assert.doesNotMatch(describeResultCode(code, "tasks"), /event|calendar/i, code);
+    }
+  });
+});
+
+describe("Tasks flag and connection cache (audit M2, M3)", () => {
+  const fake = () => {
+    const data = new Map<string, string>();
+    return { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) };
+  };
+
+  it("keeps the Tasks flag separate from the Calendar flag", () => {
+    const storage = fake();
+    writeTasksFlag("u1", true, storage);
+    assert.equal(readTasksFlag("u1", storage), true);
+    assert.equal(readCalendarFlag("u1", storage), null);
+  });
+
+  it("remembers a connection id per service, rejects malformed values, and can forget it", () => {
+    const storage = fake();
+    writeSyncConnectionId("u1", "tasks", "abc123", storage);
+    assert.equal(readSyncConnectionId("u1", "tasks", storage), "abc123");
+    assert.equal(readSyncConnectionId("u1", "calendar", storage), null);
+    storage.setItem("studylamp:gcal:connection:u1", "../evil");
+    assert.equal(readSyncConnectionId("u1", "calendar", storage), null);
+    writeSyncConnectionId("u1", "tasks", null, storage);
+    assert.equal(readSyncConnectionId("u1", "tasks", storage), null);
+  });
+
+  it("caches an id only when exactly one usable connection has the sync on", () => {
+    const list = [
+      { id: "a", status: "active", calendarEnabled: true, tasksEnabled: false },
+      { id: "b", status: "active", calendarEnabled: true, tasksEnabled: true },
+      { id: "c", status: "invalid", calendarEnabled: false, tasksEnabled: true },
+    ];
+    assert.deepEqual(syncCacheFromConnections(list, "calendar"), { enabled: true, connectionId: null });
+    assert.deepEqual(syncCacheFromConnections(list, "tasks"), { enabled: true, connectionId: "b" });
+    assert.deepEqual(syncCacheFromConnections([], "tasks"), { enabled: false, connectionId: null });
+    const storage = fake();
+    cacheSyncStateFromConnections("u1", list, storage);
+    assert.equal(readSyncConnectionId("u1", "tasks", storage), "b");
+    assert.equal(readSyncConnectionId("u1", "calendar", storage), null);
   });
 });

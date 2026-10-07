@@ -10,9 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarSyncCard } from "@/components/sync/CalendarSyncCard";
-import { ConfirmActionDialog } from "@/components/sync/ConfirmActionDialog";
-import { writeCalendarFlag } from "@/lib/googleCalendarFlag";
-import { disconnectGoogleConnection, listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
+import { TasksSyncCard } from "@/components/sync/TasksSyncCard";
+import { DisconnectGoogleDialog } from "@/components/sync/DisconnectGoogleDialog";
+import { SyncCleanupCard } from "@/components/sync/SyncCleanupCard";
+import { SyncHistoryCard } from "@/components/sync/SyncHistoryCard";
+import { cacheSyncStateFromConnections } from "@/lib/googleCalendarFlag";
+import { listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
 import type { GoogleConnectionSummary, GoogleWorkspaceFeature } from "@/types";
 import { CalendarRange, CheckCircle2, ListTodo, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,8 +48,8 @@ function GoogleWorkspaceContent() {
       const idToken = await user.getIdToken();
       const list = await listGoogleConnections(idToken);
       setConnections(list);
-      // Keep the cached "is Calendar sync on?" flag honest for the goals page.
-      writeCalendarFlag(user.uid, list.some((connection) => connection.calendarEnabled && connection.status === "active"));
+      // Keep the cached "is Calendar / Tasks sync on, and for which connection?" state honest for the goals page.
+      cacheSyncStateFromConnections(user.uid, list);
     } catch (error: any) {
       toast.error(error?.message || "Failed to load your Google Workspace connections.");
     } finally {
@@ -108,15 +111,13 @@ function GoogleWorkspaceContent() {
     }
   }
 
-  /** Runs after the user confirmed in the dialog. A thrown error stays visible in that dialog. */
-  async function confirmDisconnect(connection: GoogleConnectionSummary) {
+  /** Runs after the dialog finished (any optional removal first, then the disconnect itself). */
+  function handleDisconnected(connection: GoogleConnectionSummary, removed: number) {
     if (!user) return;
-    const idToken = await user.getIdToken();
-    await disconnectGoogleConnection(idToken, connection.id);
     const remaining = connections.filter((c) => c.id !== connection.id);
     setConnections(remaining);
-    writeCalendarFlag(user.uid, remaining.some((c) => c.calendarEnabled && c.status === "active"));
-    toast.success("Disconnected. Anything already in Google was left untouched.");
+    cacheSyncStateFromConnections(user.uid, remaining);
+    toast.success(removed > 0 ? `Removed ${removed} item${removed === 1 ? "" : "s"} from Google and disconnected.` : "Disconnected. Anything already in Google was left untouched.");
   }
 
   const busy = connecting !== null;
@@ -249,20 +250,20 @@ function GoogleWorkspaceContent() {
                 </div>
 
                 <CalendarSyncCard connection={connection} onChanged={load} />
+                <TasksSyncCard connection={connection} onChanged={load} />
+                <SyncCleanupCard connection={connection} onChanged={load} />
               </div>
             ))}
           </CardContent>
         </Card>
+
+        {!loading && connections.length > 0 && <SyncHistoryCard />}
       </div>
 
-      <ConfirmActionDialog
-        open={disconnectTarget !== null}
+      <DisconnectGoogleDialog
+        connection={disconnectTarget}
         onOpenChange={(open) => { if (!open) setDisconnectTarget(null); }}
-        title="Disconnect this Google account?"
-        description={`Study Lamp will stop syncing with ${disconnectTarget?.googleEmail ?? "this account"} and forget its stored access. Anything already created in Google stays there.`}
-        confirmLabel="Disconnect"
-        destructive
-        onConfirm={async () => { if (disconnectTarget) await confirmDisconnect(disconnectTarget); }}
+        onDisconnected={handleDisconnected}
       />
     </AppShell>
   );

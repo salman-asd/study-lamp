@@ -1,17 +1,14 @@
-import { NextResponse } from "next/server";
-import { getGoogleSyncStatus } from "@/lib/server/googleConnections";
-import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { createSyncStatusHandler } from "@/lib/server/syncRouteHandlers";
+import { realSyncStatusDeps } from "@/lib/server/syncRouteDeps";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const GET = withAuthedRoute(async ({ uid, req }) => {
-  const connectionId = new URL(req.url).searchParams.get("connectionId");
-  try {
-    const status = await getGoogleSyncStatus(uid, connectionId);
-    return NextResponse.json(status);
-  } catch (error) {
-    return syncErrorResponse("google sync status", error);
-  }
-}, { scope: "googleSync", preset: "googleSync", limit: 60, tooManyMessage: "Too many status checks. Please slow down." });
+/** Counts come from our own docs only (no Google call). `?target=tasks` returns the Tasks status; default is Calendar. */
+export const GET = withAuthedRoute(createSyncStatusHandler(realSyncStatusDeps), {
+  scope: "googleSync",
+  preset: "googleSync",
+  limit: 60,
+  tooManyMessage: "Too many status checks. Please slow down.",
+});

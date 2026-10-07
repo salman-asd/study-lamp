@@ -1,9 +1,27 @@
 import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
-import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleWorkspaceFeature } from "@/types";
+import type { RemovalApplyResult, RemovalPreviewResult, RemovalScope, RemovalTarget } from "@/lib/googleRemovalFlow";
+import type { GoogleConnectionSummary, GoogleSyncHistoryEntry, GoogleSyncStatus, GoogleTasksStatus, GoogleWorkspaceFeature } from "@/types";
+
+/** An API failure that keeps the HTTP status and the server's machine-readable `code` (for example "ambiguous"). */
+export class GoogleApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = "GoogleApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** True when the server said the user has several Google connections with this sync on and must keep only one (audit M2). */
+export function isAmbiguousConnectionError(error: unknown): boolean {
+  return error instanceof GoogleApiError && error.code === "ambiguous";
+}
 
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new GoogleApiError(data.error || `Request failed (${res.status})`, res.status, typeof data.code === "string" ? data.code : null);
   return data;
 }
 
@@ -81,6 +99,55 @@ export async function planGoogleSync(idToken: string, goalIds?: string[], connec
   });
   const data = await parseOrThrow(res);
   return data as GoogleSyncPlanResponse;
+}
+
+/** One target's plan inside a plan response (Tasks). Same shape as the Calendar plan, with task ids. */
+export interface GoogleTasksPlanResponse {
+  planToken: string;
+  items: PlanItem[];
+  counts: GoogleSyncPlanResponse["counts"];
+  orphans: Array<{ goalId: string; titleSnapshot: string; taskId: string | null }>;
+  remaining: number;
+}
+
+/** W4. Read-only. Asks only for the Tasks plan. Returns null when Tasks sync is off. */
+export async function planGoogleTasksSync(idToken: string, goalIds?: string[], connectionId?: string): Promise<GoogleTasksPlanResponse | null> {
+  const res = await fetch("/api/google/sync/plan", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ targets: ["tasks"], ...(goalIds && goalIds.length ? { goalIds } : {}), ...(connectionId ? { connectionId } : {}) }),
+  });
+  const data = await parseOrThrow(res);
+  return (data.tasks as GoogleTasksPlanResponse | undefined) ?? null;
+}
+
+/** W4. Carries the TASKS plan token the user just confirmed. */
+export async function applyGoogleTasksSync(
+  idToken: string,
+  input: { planToken: string; accepted: string[]; resolutions?: Record<string, SyncResolution>; confirmedDestructive?: string[]; connectionId?: string },
+): Promise<GoogleSyncApplyResponse> {
+  const res = await fetch("/api/google/sync/apply", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ ...input, target: "tasks" }),
+  });
+  return (await parseOrThrow(res)) as GoogleSyncApplyResponse;
+}
+
+export async function getGoogleTasksStatus(idToken: string, connectionId?: string): Promise<GoogleTasksStatus> {
+  const query = `?target=tasks${connectionId ? `&connectionId=${encodeURIComponent(connectionId)}` : ""}`;
+  const res = await fetch(`/api/google/sync/status${query}`, { headers: authHeaders(idToken) });
+  return (await parseOrThrow(res)) as GoogleTasksStatus;
+}
+
+/** W4. Tasks sync is a separate switch from Calendar sync. Enabling creates the "Study Lamp" list and writes no tasks. */
+export async function toggleGoogleTasks(idToken: string, connectionId: string, enabled: boolean): Promise<void> {
+  const res = await fetch(`/api/google/connections/${encodeURIComponent(connectionId)}`, {
+    method: "PATCH",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ tasks: { enabled } }),
+  });
+  await parseOrThrow(res);
 }
 
 export interface GoogleSyncApplyResult {
@@ -197,4 +264,44 @@ export async function applyGoogleAppend(
     body: JSON.stringify({ planToken: input.planToken, accepted: input.accepted, documentId: input.documentId }),
   });
   return parseAppendResponse(res);
+}
+
+// ─── W5: history and explicit removal ───────────────────────────────────────
+
+/** Thrown when the number of items to remove changed between the preview and the confirmation. */
+export class GoogleRemovalCountChangedError extends GoogleApiError {
+  readonly count: number;
+  constructor(message: string, count: number) {
+    super(message, 409, "count_changed");
+    this.name = "GoogleRemovalCountChangedError";
+    this.count = count;
+  }
+}
+
+/** Read-only. The newest sync log entries, newest first. Pass the returned `nextCursor` for the next page. */
+export async function getGoogleSyncHistory(idToken: string, cursor?: string): Promise<{ entries: GoogleSyncHistoryEntry[]; nextCursor: string | null }> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await fetch(`/api/google/sync/history${query}`, { headers: authHeaders(idToken) });
+  return (await parseOrThrow(res)) as { entries: GoogleSyncHistoryEntry[]; nextCursor: string | null };
+}
+
+/** Read-only. Counts what Study Lamp created for one connection (from Study Lamp's own records) and signs a plan token. */
+export async function previewGoogleRemoval(idToken: string, input: { target: RemovalTarget; scope: RemovalScope; connectionId: string }): Promise<RemovalPreviewResult> {
+  const res = await fetch("/api/google/sync/remove/preview", { method: "POST", headers: authHeaders(idToken, true), body: JSON.stringify(input) });
+  return (await parseOrThrow(res)) as RemovalPreviewResult;
+}
+
+/** Deletes the previewed events/tasks. `confirmCount` is the number the user was shown; a different fresh count fails with GoogleRemovalCountChangedError. */
+export async function applyGoogleRemoval(
+  idToken: string,
+  input: { planToken: string; confirmCount: number; target: RemovalTarget; scope: RemovalScope; connectionId: string },
+): Promise<RemovalApplyResult> {
+  const res = await fetch("/api/google/sync/remove", { method: "POST", headers: authHeaders(idToken, true), body: JSON.stringify(input) });
+  if (res.status === 409) {
+    const data = await res.clone().json().catch(() => ({}));
+    if (data && data.code === "count_changed" && typeof data.count === "number") {
+      throw new GoogleRemovalCountChangedError(typeof data.error === "string" ? data.error : "The number of items changed.", data.count);
+    }
+  }
+  return (await parseOrThrow(res)) as RemovalApplyResult;
 }

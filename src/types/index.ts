@@ -583,6 +583,42 @@ export interface GoogleCalendarConnection {
   updatedAt: FirestoreTimeValue;
 }
 
+export interface GoogleTasksConnection {
+  id: string;
+  enabled: boolean;
+  listId: string | null;
+  listName: string | null;
+  lastSyncAt: string | null;
+}
+
+/** A mapping whose goal no longer exists (W5). `titleSnapshot` is the goal title as last synced. */
+export interface GoogleSyncOrphan {
+  goalId: string;
+  titleSnapshot: string;
+}
+
+export interface GoogleTasksStatus {
+  enabled: boolean;
+  connectionId: string | null;
+  listName: string | null;
+  lastSyncAt: string | null;
+  counts: GoogleSyncCounts;
+  /** Up to 50 mappings whose goal was deleted (W5). Reported only; removal is a separate, confirmed step. */
+  orphans?: GoogleSyncOrphan[];
+}
+
+/** One line of the sync history (W5). Goal-level fields only: never tokens or document text. */
+export interface GoogleSyncHistoryEntry {
+  at: string;
+  scope: string;
+  direction: string;
+  itemKind: string;
+  goalId?: string;
+  titleSnapshot: string;
+  fields: Array<{ name: string; before: string | boolean | null; after: string | boolean | null }>;
+  result: "applied" | "stale" | "skipped" | "failed";
+}
+
 export interface GoogleConnectionSummary {
   id: string;
   googleEmail: string;
@@ -600,6 +636,8 @@ export interface GoogleSyncStatus {
   calendarName: string | null;
   lastSyncAt: string | null;
   counts: GoogleSyncCounts;
+  /** Up to 50 mappings whose goal was deleted (W5). Reported only; removal is a separate, confirmed step. */
+  orphans?: GoogleSyncOrphan[];
 }
 
 /**

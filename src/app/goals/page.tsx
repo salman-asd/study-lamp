@@ -35,6 +35,8 @@ import { toast } from "sonner";
 import { trackLearningEvent } from "@/lib/analytics";
 import { CalendarSyncBanner, CalendarSyncReview } from "@/components/sync/CalendarSyncReview";
 import { useCalendarSync } from "@/components/sync/useCalendarSync";
+import { TasksSyncBanner, TasksSyncReview } from "@/components/sync/TasksSyncReview";
+import { useTasksSync } from "@/components/sync/useTasksSync";
 
 type FilterTab = "all" | "active" | "completed" | "overdue";
 type SortMode = "dueDate" | "priority" | "newest" | "oldest" | "alphabetical";
@@ -122,6 +124,16 @@ function GoalsContent() {
   // Google Calendar sync. Every call here is a READ-ONLY check; nothing is written until the user confirms in the review dialog.
   // After changes are applied the list is reloaded (this page reads goals once, so a pulled change would otherwise stay hidden).
   const sync = useCalendarSync({ autoCheck: true, onApplied: () => { void refresh(); } });
+  // Google Tasks sync: the same rule. Read-only look at a goal after it changes; the review dialog is the only way to write.
+  const tasksSync = useTasksSync({ detectEnabled: true, onApplied: () => { void refresh(); } });
+  const tasksReviewRequested = searchParams.get("tasksReview") === "1";
+  const tasksReviewOpenedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!tasksReviewRequested || !tasksSync.enabled || tasksReviewOpenedRef.current) return;
+    tasksReviewOpenedRef.current = true;
+    void tasksSync.check({ openDialog: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksReviewRequested, tasksSync.enabled]);
   const reviewRequested = searchParams.get("calendarReview") === "1";
   const reviewOpenedRef = React.useRef(false);
   React.useEffect(() => {
@@ -258,10 +270,12 @@ function GoalsContent() {
         await updateGoal(user.uid, editingGoal.id, input);
         toast.success("Goal updated");
         void sync.checkGoal(editingGoal.id);
+        void tasksSync.checkGoal(editingGoal.id);
       } else {
         const newGoalId = await addGoal(user.uid, input);
         toast.success("Goal added");
         void sync.checkGoal(newGoalId);
+        void tasksSync.checkGoal(newGoalId);
       }
       setDialogOpen(false);
       refresh();
@@ -275,6 +289,7 @@ function GoalsContent() {
     setGoals((current) => current.map((g) => (g.id === goal.id ? { ...g, completed } : g)));
     await toggleGoal(user.uid, goal.id, completed);
     void sync.checkGoal(goal.id);
+    void tasksSync.checkGoal(goal.id);
     if (completed) void trackLearningEvent(user.uid, "goal_completed", { goalId: goal.id });
     if (completed) toast.success("Nice work! Goal marked complete.");
   }
@@ -315,6 +330,7 @@ function GoalsContent() {
         </div>
 
         <CalendarSyncBanner sync={sync} />
+        <TasksSyncBanner sync={tasksSync} />
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="g-stats">
           <StatTile icon={Target} label="Total" value={stats.total} loading={loading} />
@@ -601,6 +617,7 @@ function GoalsContent() {
         </DialogContent>
       </Dialog>
       <CalendarSyncReview sync={sync} />
+      <TasksSyncReview sync={tasksSync} />
     </AppShell>
   );
 }

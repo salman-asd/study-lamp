@@ -37,6 +37,7 @@ Set these in Vercel (Production and Preview). `NEXT_PUBLIC_*` values are embedde
 | `GOOGLE_WORKSPACE_CLIENT_SECRET` | server | yes for Calendar/Tasks |
 | `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET` | server | yes for Calendar/Tasks |
 | `DRIVE_URL_SIGNING_SECRET` | server | yes for Drive playback |
+| `GOOGLE_SYNC_SIGNING_SECRET` | server | recommended for Calendar/Tasks/Docs/Sheets sync. Signs plan tokens. If unset, plan tokens fall back to `DRIVE_URL_SIGNING_SECRET` (see `docs/security.md` section 2b) |
 | `YOUTUBE_API_KEY` | server | optional |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | server | optional |
 | `QUOTA_TIMEZONE` | server | optional (default `Asia/Dhaka`) |
@@ -92,3 +93,10 @@ will fail at `npm install` with a fetch error for `cdn.sheetjs.com`. Options:
 
 Type errors such as "Cannot find module 'xlsx'" and "Parameter 'name' implicitly has an 'any' type" in
 `documentText.ts` / `documentViewerUtils.ts` are a symptom of this missing install, not of a code problem.
+
+
+## Google APIs to enable (Calendar, Tasks, Docs, Sheets)
+
+In the Google Cloud project: **APIs & Services -> Library** and enable **Google Calendar API**, **Google Tasks API**,
+**Google Docs API** and **Google Sheets API** (plus Drive API for Drive). Calendar and Tasks use the Workspace OAuth
+client; Docs and Sheets write-back uses the Drive connection (`drive.file`). See `docs/google-workspace.md`.

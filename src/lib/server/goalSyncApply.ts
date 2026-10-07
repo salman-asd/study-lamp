@@ -305,10 +305,10 @@ function directionOf(item: PlanItem): string {
 }
 
 /** Goal-level fields only: never tokens, never document text (Rule 4). */
-export function buildHistoryEntry(item: PlanItem, goal: Goal | undefined, result: ApplyDecision["status"], now = new Date()): GoogleSyncLogEntry {
+export function buildHistoryEntry(item: PlanItem, goal: Goal | undefined, result: ApplyDecision["status"], now = new Date(), scope: "calendar" | "tasks" = "calendar"): GoogleSyncLogEntry {
   return {
     at: now.toISOString(),
-    scope: "calendar",
+    scope,
     direction: directionOf(item),
     itemKind: item.kind,
     ...(item.goalId ? { goalId: item.goalId } : {}),
