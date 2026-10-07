@@ -26,6 +26,15 @@ Signs the short-lived Drive stream/thumbnail/download URLs. Changing it **invali
 
 TTLs (`src/lib/server/driveSignedUrl.ts`): stream 6 h, download 10 min, thumbnail 24 h. A leaked URL works until it expires or the secret is rotated.
 
+## 2b. `GOOGLE_SYNC_SIGNING_SECRET` (sync plan tokens)
+
+Every Google write (Calendar, Tasks, Docs, Sheets) goes through preview -> confirm -> apply. The preview returns a **plan token**: an HMAC-signed, per-user, per-scope, one-time token that lists the exact items the user was shown. It is signed over the prefix `sync-plan.v1|`, so it cannot be confused with a Drive signed URL even if both use the same key.
+
+- **Use a dedicated secret.** Set `GOOGLE_SYNC_SIGNING_SECRET` (`openssl rand -base64 32`), different from `DRIVE_URL_SIGNING_SECRET`. Plan tokens use it when set.
+- **Fallback.** If it is not set, plan tokens are signed with `DRIVE_URL_SIGNING_SECRET`. This works, but then one leaked secret (for example from a Drive URL signing incident) could also be used to forge plan tokens, so treat the fallback as temporary.
+- **Rotation.** Plan tokens live 15 minutes. Changing the secret only invalidates previews that are open right now; users just press "Check for changes" again. Nothing stored is affected.
+- **Switching from the fallback.** Add the new variable and redeploy. No migration is needed.
+
 ## 3. Other secrets
 
 | Secret | How to rotate |
@@ -59,7 +68,7 @@ TTLs (`src/lib/server/driveSignedUrl.ts`): stream 6 h, download 10 min, thumbnai
 
 ## 7. If secrets leaked
 
-1. **Rotate first**, in this order: Firebase Admin key, `AI_CONNECTION_ENCRYPTION_KEY` (section 1), `DRIVE_URL_SIGNING_SECRET`, `GOOGLE_DRIVE_OAUTH_STATE_SECRET`, `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET`, Google OAuth client secrets, API keys/tokens (YouTube, Facebook).
+1. **Rotate first**, in this order: Firebase Admin key, `AI_CONNECTION_ENCRYPTION_KEY` (section 1), `DRIVE_URL_SIGNING_SECRET`, `GOOGLE_SYNC_SIGNING_SECRET`, `GOOGLE_DRIVE_OAUTH_STATE_SECRET`, `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET`, Google OAuth client secrets, API keys/tokens (YouTube, Facebook).
 2. If encrypted credentials or the encryption key could have leaked: ask users to remove and re-add AI keys, and revoke Drive access at https://myaccount.google.com/permissions (delete the app's `driveConnections` and `googleConnections` docs if needed).
 3. Review Firestore usage (Console → Usage) and Cloud Audit Logs for unusual reads or writes; check AI provider dashboards for unexpected spend.
 4. Remove the leaked file from git **history** (for example `git filter-repo`), not just the latest commit. Rotating is still required, because the old values stay valid until you change them.

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SortableList } from "@/components/dnd/SortableList";
 import { addGoal } from "@/lib/firestore/goals";
-import { offerCalendarReview } from "@/lib/calendarGoalHook";
+import { offerCalendarReview, offerTasksReview } from "@/lib/calendarGoalHook";
 import { useRouter } from "next/navigation";
 import { buildPlaylistSearchQuery, goalDraftTargetDate, parseImportedRoadmapText } from "@/lib/roadmapUtils";
 import { searchPlaylistsForStep, type YouTubePlaylistSearchResult } from "@/lib/roadmapPlaylistClient";
@@ -161,6 +161,7 @@ export function RoadmapEditor({
       setGoalSuggestions((prev) => (prev ? prev.filter((item) => item !== suggestion) : prev));
       toast.success(`Added "${suggestion.title}" to your Goals.`);
       void offerCalendarReview(user, newGoalId, () => router.push("/goals?calendarReview=1"));
+      void offerTasksReview(user, newGoalId, () => router.push("/goals?tasksReview=1"));
     } catch (error: any) {
       toast.error(error?.message || "Unable to add this goal.");
     }

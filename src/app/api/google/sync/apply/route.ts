@@ -1,158 +1,21 @@
-import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/server/firebase-admin";
-import { getAccessTokenForConnection, getGoogleCalendarConnection, resolveCalendarConnectionId, touchCalendarLastCheck } from "@/lib/server/googleConnections";
-import { applyCalendarSync, PlanAlreadyAppliedError, type CalendarApplyDeps, type SyncResolution } from "@/lib/server/goalSyncApply";
-import type { LiveCalendarEvent } from "@/lib/server/goalSyncPlan";
-import { listGoalSyncMappings, recordCalendarMappingError, saveCalendarMapping } from "@/lib/server/googleSyncState";
-import { createGoalWithMapping, deleteGoalWithMapping, pullGoalFieldsAtomic } from "@/lib/server/goalSyncStore";
-import { ignoreRemote, listIgnoredRemoteIds } from "@/lib/server/googleIgnored";
-import { saveSyncLogEntry } from "@/lib/server/googleSyncLog";
-import { resolveTasksTarget, runTasksApply } from "@/lib/server/tasksSyncRuntime";
-import { createCalendarClient } from "@/lib/server/googleCalendar";
-import { syncErrorResponse } from "@/lib/server/googleSyncErrors";
-import { PlanTokenVerificationError, verifyPlanToken } from "@/lib/server/planToken";
-import { withAuthedRoute, readJsonObject } from "@/lib/server/routeHelpers";
-import type { Goal } from "@/types";
+import { withAuthedRoute } from "@/lib/server/routeHelpers";
+import { createSyncApplyHandler } from "@/lib/server/syncRouteHandlers";
+import { realSyncApplyDeps } from "@/lib/server/syncRouteDeps";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const RESOLUTIONS: readonly SyncResolution[] = ["use_study_lamp", "use_google", "skip", "unlink", "recreate", "delete_goal", "ignore"];
-/** `<itemId>` (64 hex) or `<itemId>:<field>` for one field of a conflict. */
-const RESOLUTION_KEY = /^[a-f0-9]{64}(:[A-Za-z]{1,30})?$/;
-const MAX_LIST = 500;
-
-function readResolutions(value: unknown): Record<string, SyncResolution> {
-  const result: Record<string, SyncResolution> = {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) return result;
-  for (const [key, choice] of Object.entries(value).slice(0, MAX_LIST)) {
-    if (!RESOLUTION_KEY.test(key)) continue;
-    if (typeof choice === "string" && (RESOLUTIONS as readonly string[]).includes(choice)) result[key] = choice as SyncResolution;
-  }
-  return result;
-}
-
-function summarize(results: Array<{ status: "applied" | "stale" | "skipped" | "failed" }>) {
-  const applied = results.filter((result) => result.status === "applied").length;
-  const failed = results.filter((result) => result.status === "failed").length;
-  return { ok: applied > 0 && failed === 0, results, applied, skipped: results.length - applied - failed, failed };
-}
-
-function readStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").slice(0, MAX_LIST) : [];
-}
-
 /**
- * APPLY. Verifies the plan token, re-reads CURRENT goals, mappings and LIVE Google events, recomputes the plan and
- * lets the confirmation gate decide. `target` ("calendar" default | "tasks") picks the plan the token belongs to. Content sent to Google is built on the server from stored goals; the request
- * body only says which plan items the user accepted and how they resolved conflicts.
+ * APPLY. Verifies the plan token, re-reads CURRENT goals, mappings and LIVE Google data, recomputes the plan and
+ * lets the confirmation gate decide. `target` ("calendar" default | "tasks") picks the plan the token belongs to.
+ * Content sent to Google is built on the server from stored goals; the request body only says which plan items
+ * the user accepted and how they resolved conflicts. After a successful apply, spent token docs are pruned
+ * (fire-and-forget). The logic lives in syncRouteHandlers.ts so it can be tested with fakes.
  */
-export const POST = withAuthedRoute(async ({ uid, req }) => {
-  const parsed = await readJsonObject(req);
-  if (!parsed.ok) return parsed.response;
-
-  const body = parsed.body;
-  const planToken = typeof body.planToken === "string" ? body.planToken : "";
-  const accepted = readStrings(body.accepted);
-  const resolutions = readResolutions(body.resolutions);
-  const confirmedDestructive = readStrings(body.confirmedDestructive);
-  const requestedConnectionId = typeof body.connectionId === "string" ? body.connectionId : null;
-
-  if (!planToken) {
-    return NextResponse.json({ error: "Missing planToken." }, { status: 400 });
-  }
-
-  // Each target has its own plan and token. Default stays "calendar" so existing callers are unchanged.
-  const target = body.target === "tasks" ? "tasks" : "calendar";
-
-  try {
-    verifyPlanToken(planToken, uid, target);
-  } catch (error) {
-    if (error instanceof PlanTokenVerificationError) {
-      return NextResponse.json({ error: "Invalid or expired plan token." }, { status: 401 });
-    }
-    return syncErrorResponse("google sync apply token", error);
-  }
-
-  if (accepted.length === 0) {
-    return NextResponse.json({ error: "The sync plan was not accepted for application." }, { status: 409 });
-  }
-
-  try {
-    if (target === "tasks") {
-      const tasksTarget = await resolveTasksTarget(uid, requestedConnectionId);
-      if (!tasksTarget) return NextResponse.json({ error: "Google Tasks sync is not enabled." }, { status: 409 });
-      const { results } = await runTasksApply(uid, tasksTarget, { planToken, accepted, resolutions, confirmedDestructive });
-      return NextResponse.json(summarize(results));
-    }
-
-    const connectionId = await resolveCalendarConnectionId(uid, requestedConnectionId);
-    const connection = await getGoogleCalendarConnection(uid, connectionId);
-    if (!connection?.enabled || !connection.calendarId) {
-      return NextResponse.json({ error: "Google Calendar sync is not enabled." }, { status: 409 });
-    }
-
-    const calendarId = connection.calendarId;
-    const accessToken = await getAccessTokenForConnection(uid, connectionId, "calendar");
-    const client = createCalendarClient(accessToken);
-    const goalsRef = adminDb.collection("users").doc(uid).collection("goals");
-
-    const deps: CalendarApplyDeps = {
-      uid,
-      connectionId,
-      calendarId,
-      client,
-      async listGoals() {
-        const snapshot = await goalsRef.get();
-        return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal);
-      },
-      listMappings: () => listGoalSyncMappings(uid),
-      listIgnoredRemoteIds: () => listIgnoredRemoteIds(uid, "calendar"),
-      async listLiveEvents() {
-        const listed = await client.listEvents(calendarId, { showDeleted: true });
-        const events = listed.items.filter((event): event is LiveCalendarEvent => typeof event.id === "string" && event.id.length > 0);
-        return { events, truncated: listed.truncated };
-      },
-      saveMapping: (goalId, input) =>
-        saveCalendarMapping(uid, goalId, {
-          titleSnapshot: input.titleSnapshot,
-          calendar: { connectionId, calendarId, eventId: input.eventId, remoteEtag: input.remoteEtag, base: input.base, status: input.status },
-        }),
-      recordError: (goalId, code) => recordCalendarMappingError(uid, goalId, code),
-      pullGoalFields: (goalId, expected, updates, mapping) =>
-        pullGoalFieldsAtomic(uid, goalId, expected, updates, { connectionId, calendarId, ...mapping }),
-      createGoalFromEvent: (input) =>
-        createGoalWithMapping(uid, {
-          title: input.title,
-          targetDate: input.targetDate,
-          mapping: {
-            connectionId,
-            calendarId,
-            eventId: input.eventId,
-            remoteEtag: input.remoteEtag,
-            base: { title: input.title, targetDate: input.targetDate, completed: false },
-          },
-        }),
-      deleteGoal: (goalId, expected) => deleteGoalWithMapping(uid, goalId, expected),
-      ignoreRemote: (remoteId) => ignoreRemote(uid, "calendar", remoteId),
-      log: (entry) => saveSyncLogEntry(uid, entry),
-    };
-
-    const { results } = await applyCalendarSync(deps, { planToken, accepted, resolutions, confirmedDestructive });
-
-    if (results.some((result) => result.status === "applied")) {
-      await touchCalendarLastCheck(uid, connectionId).catch(() => undefined);
-    }
-
-    return NextResponse.json(summarize(results));
-  } catch (error) {
-    if (error instanceof PlanTokenVerificationError) {
-      return NextResponse.json({ error: "Invalid or expired plan token." }, { status: 401 });
-    }
-    if (error instanceof PlanAlreadyAppliedError) {
-      return NextResponse.json({ error: "This plan was already applied." }, { status: 409 });
-    }
-    return syncErrorResponse("google sync apply", error);
-  }
-}, { scope: "googleApply", preset: "googleApply", limit: 20, tooManyMessage: "Too many sync applies. Please slow down." });
+export const POST = withAuthedRoute(createSyncApplyHandler(realSyncApplyDeps), {
+  scope: "googleApply",
+  preset: "googleApply",
+  limit: 20,
+  tooManyMessage: "Too many sync applies. Please slow down.",
+});

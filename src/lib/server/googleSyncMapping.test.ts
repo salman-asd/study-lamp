@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { computeSyncCounts, parseGoalSyncMapping, type GoalSyncMapping } from "./googleSyncMapping";
+import { computeSyncCounts, mappingRemovalAction, parseGoalSyncMapping, type GoalSyncMapping } from "./googleSyncMapping";
 
 const CAL = "cal-abc@group.calendar.google.com";
 
@@ -42,5 +42,24 @@ describe("parseGoalSyncMapping", () => {
   it("keeps the 'unlinked' status", () => {
     const parsed = parseGoalSyncMapping("g1", { titleSnapshot: "T", calendar: { connectionId: "c", calendarId: CAL, eventId: "e", status: "unlinked" } });
     assert.equal(parsed?.calendar?.status, "unlinked");
+  });
+});
+
+describe("mappingRemovalAction (audit M1)", () => {
+  it("keeps the Tasks link when the Calendar link is removed", () => {
+    assert.equal(mappingRemovalAction({ calendar: { eventId: "e" }, tasks: { taskId: "t" } }, "calendar"), "delete_block");
+  });
+
+  it("keeps the Calendar link when the Tasks link is removed", () => {
+    assert.equal(mappingRemovalAction({ calendar: { eventId: "e" }, tasks: { taskId: "t" } }, "tasks"), "delete_block");
+  });
+
+  it("deletes the whole doc when nothing else lives in it", () => {
+    assert.equal(mappingRemovalAction({ calendar: { eventId: "e" } }, "calendar"), "delete_doc");
+    assert.equal(mappingRemovalAction({ tasks: { taskId: "t" } }, "tasks"), "delete_doc");
+  });
+
+  it("does nothing for a missing doc", () => {
+    assert.equal(mappingRemovalAction(undefined, "calendar"), "none");
   });
 });

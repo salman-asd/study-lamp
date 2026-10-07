@@ -1,9 +1,26 @@
 import type { PlanItem, SyncResolution } from "@/lib/sync/plan";
 import type { GoogleConnectionSummary, GoogleSyncStatus, GoogleTasksStatus, GoogleWorkspaceFeature } from "@/types";
 
+/** An API failure that keeps the HTTP status and the server's machine-readable `code` (for example "ambiguous"). */
+export class GoogleApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = "GoogleApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** True when the server said the user has several Google connections with this sync on and must keep only one (audit M2). */
+export function isAmbiguousConnectionError(error: unknown): boolean {
+  return error instanceof GoogleApiError && error.code === "ambiguous";
+}
+
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new GoogleApiError(data.error || `Request failed (${res.status})`, res.status, typeof data.code === "string" ? data.code : null);
   return data;
 }
 

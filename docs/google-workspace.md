@@ -63,8 +63,14 @@ prefix, so a Drive state can never be replayed here (or vice versa).
 | Feature | Scope | Why it is safe |
 | --- | --- | --- |
 | Calendar | `calendar.app.created` | Study Lamp can only see and edit calendars it created itself — never your existing calendars. |
-| Tasks | `tasks` | Read/write tasks; the app writes only after you confirm. |
+| Tasks | `tasks` | **Wider than Calendar.** Google has no "only what the app created" scope for Tasks, so this permission lets the app read and change **all** of your task lists. Study Lamp's code only ever touches its own "Study Lamp" list (it never lists or opens your other lists; a test enforces this), and it writes only after you confirm. |
 | Account | `userinfo.email` | Only to show which Google account is connected. |
+
+> **Be aware when you allow Tasks.** Google's consent screen will say Study
+> Lamp can see and edit your tasks. That is the narrowest Tasks permission
+> Google offers; it cannot be limited to one list. Calendar is different:
+> `calendar.app.created` really is limited to calendars Study Lamp created.
+> If you are not comfortable with this, allow only Calendar.
 
 Study Lamp requests one feature at a time ("Allow Calendar access" / "Allow
 Tasks access"), using incremental consent (`include_granted_scopes=true`) so
@@ -113,3 +119,23 @@ multi-day events and events without a usable title or date are listed as "Not ap
 guessed into a date.
 
 A goal that you "stop syncing" after its event was deleted is skipped until its event exists in Google again.
+
+## 7. Before enabling sync for real users: run the Google diagnostic
+
+Two behaviours cannot be checked without calling Google: whether Google Tasks honours `If-Match` on `tasks.patch`, and
+whether `calendars.insert`, `events.patch` (with `If-Match`) and `calendars.get` work under `calendar.app.created`.
+Run the diagnostic once with a **test** Google account:
+
+```
+GOOGLE_ACCESS_TOKEN=<short-lived access token> node scripts/googleDiagnostic.mjs
+```
+
+- Get the token from the OAuth Playground with the scopes `tasks` and `calendar.app.created` (see the comment at the top
+  of the script). Paste it only into that one command; do not save it.
+- It prints **HTTP status codes and OK/FAIL lines only**: no tokens, ids, bodies or task/event text.
+- It creates one throwaway task list and one throwaway calendar named "Study Lamp diagnostic" and deletes exactly those.
+- `--tasks` or `--calendar` runs one half.
+- If Tasks answers `200` to a stale `If-Match`, the app is still safe (every item is also checked by its fingerprint and
+  etag at apply time), but stale detection is weaker. If Calendar returns `403`/`404` under `calendar.app.created`, stop
+  and decide before widening any scope.
+

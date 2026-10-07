@@ -2,9 +2,16 @@
 // from server-only modules, so this file is safe to bundle into the browser.
 //
 // Step W2 (Workspace connection foundation). Study Lamp asks Google for the
-// narrowest scopes that let it manage only what it creates:
+// narrowest scopes that exist for each service:
 //   calendar -> calendar.app.created (only calendars/events Study Lamp made)
-//   tasks    -> tasks                (only tasks Study Lamp made/lists)
+//   tasks    -> tasks                (NOT narrow: Google has no app-created
+//                                     scope for Tasks, so this grants read and
+//                                     write access to ALL of the user's task
+//                                     lists, not only the "Study Lamp" list)
+// Because the Tasks grant is wider than the feature needs, the limit is
+// enforced in OUR code: every Tasks call takes the stored Study Lamp list id,
+// and the client exposes no way to list or touch other lists (pinned by a test
+// in googleTasks.test.ts). The consent copy and docs must say this plainly.
 // The userinfo.email scope is always requested so the callback can show which
 // Google account was connected; it grants no additional data access.
 

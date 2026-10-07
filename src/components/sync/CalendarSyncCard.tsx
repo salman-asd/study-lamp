@@ -10,7 +10,7 @@ import { ConfirmActionDialog } from "@/components/sync/ConfirmActionDialog";
 import { CalendarSyncReview } from "@/components/sync/CalendarSyncReview";
 import { useCalendarSync } from "@/components/sync/useCalendarSync";
 import { getGoogleSyncStatus, toggleGoogleCalendar } from "@/lib/googleClient";
-import { writeCalendarFlag } from "@/lib/googleCalendarFlag";
+import { writeCalendarFlag, writeSyncConnectionId } from "@/lib/googleCalendarFlag";
 import type { GoogleConnectionSummary, GoogleSyncStatus } from "@/types";
 
 /** What Study Lamp does with each goal field. Shown to the user so nothing about sync is a surprise. */
@@ -63,6 +63,7 @@ export function CalendarSyncCard({ connection, onChanged }: { connection: Google
     try {
       await toggleGoogleCalendar(await user.getIdToken(), connection.id, next);
       writeCalendarFlag(user.uid, next);
+      if (next) writeSyncConnectionId(user.uid, "calendar", connection.id);
       setEnabled(next);
       toast.success(next ? "Calendar sync is on. Nothing has been written yet." : "Calendar sync is off. Nothing in Google was changed.");
       onChanged?.();

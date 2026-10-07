@@ -11,6 +11,7 @@ import { ConfirmChangesDialog } from "@/components/sync/ConfirmChangesDialog";
 import { describeCounts } from "@/components/sync/CalendarSyncCard";
 import { useTasksSync } from "@/components/sync/useTasksSync";
 import { getGoogleTasksStatus, toggleGoogleTasks } from "@/lib/googleClient";
+import { writeSyncConnectionId, writeTasksFlag } from "@/lib/googleCalendarFlag";
 import type { GoogleConnectionSummary, GoogleTasksStatus } from "@/types";
 
 /** What Study Lamp does with each goal field. Shown to the user so nothing about sync is a surprise. */
@@ -53,6 +54,8 @@ export function TasksSyncCard({ connection, onChanged }: { connection: GoogleCon
     setSwitching(true);
     try {
       await toggleGoogleTasks(await user.getIdToken(), connection.id, next);
+      writeTasksFlag(user.uid, next);
+      if (next) writeSyncConnectionId(user.uid, "tasks", connection.id);
       setEnabled(next);
       toast.success(next ? "Tasks sync is on. Nothing has been written yet." : "Tasks sync is off. Nothing in Google was changed.");
       onChanged?.();
@@ -144,7 +147,7 @@ export function TasksSyncCard({ connection, onChanged }: { connection: GoogleCon
         open={enableOpen}
         onOpenChange={setEnableOpen}
         title="Turn on Google Tasks sync?"
-        description={`Study Lamp will create a new task list called “Study Lamp” in ${connection.googleEmail}. It never looks at or changes your other lists. Turning this on writes no tasks: every change is shown to you first, and only the ones you tick are applied.`}
+        description={`Study Lamp will create a new task list called “Study Lamp” in ${connection.googleEmail}. Google only offers an all-or-nothing Tasks permission, so Study Lamp technically has access to all of your task lists, but it is built to use only the “Study Lamp” list and never reads or changes your other lists. Turning this on writes no tasks: every change is shown to you first, and only the ones you tick are applied.`}
         confirmLabel="Turn on"
         onConfirm={() => setTasksEnabled(true)}
       />

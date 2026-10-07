@@ -1,7 +1,7 @@
 import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { buildCalendarMappingDoc, mappingDocRef } from "@/lib/server/googleSyncState";
-import type { SyncBase } from "@/lib/server/googleSyncMapping";
+import { mappingRemovalAction, type SyncBase } from "@/lib/server/googleSyncMapping";
 
 /**
  * Goal writes made by the Calendar APPLY step. ADMIN SDK ONLY (Rule 3).
@@ -101,11 +101,16 @@ export async function createGoalWithMapping(
   return { goalId: goalRef.id };
 }
 
-/** Deletes a goal and its mapping (the user's explicit "Delete the goal here"), only if the goal is unchanged. */
+/**
+ * Deletes a goal (the user's explicit "Delete the goal here"), only if the goal is unchanged. Only the CALENDAR block
+ * of the mapping goes with it: when a Tasks block exists it is kept, so the Tasks sync can report it as an orphan
+ * instead of silently losing it (audit M1). Mirrors deleteGoalWithTasksMapping.
+ */
 export async function deleteGoalWithMapping(uid: string, goalId: string, expected: GoalExpectation): Promise<GoalWriteResult> {
   const goalRef = goalsRef(uid).doc(goalId);
+  const mapRef = mappingDocRef(uid, goalId);
   return adminDb.runTransaction(async (tx) => {
-    const snap = await tx.get(goalRef);
+    const [snap, mapSnap] = await Promise.all([tx.get(goalRef), tx.get(mapRef)]);
     if (!snap.exists) return "missing" as const;
     const current = snap.data() ?? {};
     const currentTitle = typeof current.title === "string" ? current.title : "";
@@ -113,7 +118,11 @@ export async function deleteGoalWithMapping(uid: string, goalId: string, expecte
     if (currentTitle !== expected.title || currentDate !== expected.targetDate) return "changed" as const;
 
     tx.delete(goalRef);
-    tx.delete(mappingDocRef(uid, goalId));
+    if (mapSnap.exists) {
+      const action = mappingRemovalAction(mapSnap.data(), "calendar");
+      if (action === "delete_block") tx.update(mapRef, { calendar: admin.firestore.FieldValue.delete() });
+      else tx.delete(mapRef);
+    }
     return "ok" as const;
   });
 }

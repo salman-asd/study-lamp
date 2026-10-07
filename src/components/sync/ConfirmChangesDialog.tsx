@@ -116,6 +116,7 @@ const TASKS_KIND_LABELS: Partial<Record<PlanItem["kind"], string>> = {
   push_create: "Add to Google Tasks",
   push_update: "Update Google Tasks",
   remote_deleted: "Deleted in Google Tasks",
+  pull_create: "Task in Google that isn't a goal yet",
 };
 
 const KIND_LABELS: Record<PlanItem["kind"], string> = {
@@ -128,6 +129,11 @@ const KIND_LABELS: Record<PlanItem["kind"], string> = {
   attention: "Can't be applied",
   append: "Add to the end of your file",
 };
+
+/** "task" for Google Tasks, "event" for Google Calendar: the noun the dialog uses in its sentences. */
+export function serviceNoun(service: GoogleServiceName = "Google Calendar"): "task" | "event" {
+  return service === "Google Tasks" ? "task" : "event";
+}
 
 export function kindLabel(kind: PlanItem["kind"], service: GoogleServiceName = "Google Calendar"): string {
   return (service === "Google Tasks" ? TASKS_KIND_LABELS[kind] : undefined) ?? KIND_LABELS[kind];
@@ -312,7 +318,7 @@ export function ConfirmChangesDialog({
 
                         {item.kind === "attention" && (
                           <p className="mt-2 text-xs text-muted-foreground">
-                            {describeAttentionReason(item.reason)}
+                            {describeAttentionReason(item.reason, service === "Google Tasks" ? "tasks" : "calendar")}
                             {isEventOnlyAttention ? " Tick the box to hide it from future checks." : ""}
                           </p>
                         )}
@@ -400,11 +406,11 @@ export function ConfirmChangesDialog({
 
                         {isImport && checked && (
                           <fieldset className="mt-3 rounded-md border bg-muted/30 p-2">
-                            <legend className="px-1 text-xs font-medium text-muted-foreground">Ticked: what should Study Lamp do with this event?</legend>
+                            <legend className="px-1 text-xs font-medium text-muted-foreground">Ticked: what should Study Lamp do with this {serviceNoun(service)}?</legend>
                             <div role="radiogroup" aria-label={`What to do about ${item.title}`} className="space-y-1.5">
                               {([
-                                ["use_google", "Create a goal from it (the Google event is not changed)"],
-                                ["ignore", "Don't ask about this event again"],
+                                ["use_google", `Create a goal from it (the Google ${serviceNoun(service)} is not changed)`],
+                                ["ignore", `Don't ask about this ${serviceNoun(service)} again`],
                               ] as const).map(([option, label]) => (
                                 <label key={option} className="flex items-center gap-1.5 text-sm">
                                   <input

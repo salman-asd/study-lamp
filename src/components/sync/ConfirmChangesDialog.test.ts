@@ -9,6 +9,8 @@ import {
   getDefaultSelectedItemIds,
   getDialogSummary,
   isSelectableItem,
+  kindLabel,
+  serviceNoun,
   unresolvedConflictItemIds,
 } from "./ConfirmChangesDialog";
 
@@ -162,5 +164,27 @@ describe("ConfirmChangesDialog Z4 helpers", () => {
     assert.deepEqual(built.payload.resolutions, { [eventOnly.itemId]: "ignore" });
     assert.deepEqual(built.payload.accepted, [eventOnly.itemId]);
     assert.equal(built.blockedReason, null, "an unticked delete must not block anything");
+  });
+});
+
+describe("ConfirmChangesDialog `service` prop (Google Tasks wording)", () => {
+  it("serviceNoun says task for Tasks and event for Calendar (the default)", () => {
+    assert.equal(serviceNoun("Google Tasks"), "task");
+    assert.equal(serviceNoun("Google Calendar"), "event");
+    assert.equal(serviceNoun(), "event");
+  });
+
+  it("names the right service in field sentences", () => {
+    const field = { name: "completed", before: false, after: true, direction: "study_lamp" as const };
+    assert.match(describeFieldChange(field, "Google Tasks"), /^Google Tasks will change:/);
+    assert.match(describeFieldChange(field), /^Google Calendar will change:/);
+  });
+
+  it("uses Tasks labels for Tasks and never says Calendar for them", () => {
+    for (const kind of ["push_create", "push_update", "remote_deleted", "pull_create"] as const) {
+      assert.doesNotMatch(kindLabel(kind, "Google Tasks"), /calendar|event/i, kind);
+    }
+    assert.equal(kindLabel("push_create"), "Add to Google Calendar");
+    assert.equal(kindLabel("conflict", "Google Tasks"), "Changed in both places");
   });
 });

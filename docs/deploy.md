@@ -37,6 +37,7 @@ Set these in Vercel (Production and Preview). `NEXT_PUBLIC_*` values are embedde
 | `GOOGLE_WORKSPACE_CLIENT_SECRET` | server | yes for Calendar/Tasks |
 | `GOOGLE_WORKSPACE_OAUTH_STATE_SECRET` | server | yes for Calendar/Tasks |
 | `DRIVE_URL_SIGNING_SECRET` | server | yes for Drive playback |
+| `GOOGLE_SYNC_SIGNING_SECRET` | server | recommended for Calendar/Tasks/Docs/Sheets sync. Signs plan tokens. If unset, plan tokens fall back to `DRIVE_URL_SIGNING_SECRET` (see `docs/security.md` section 2b) |
 | `YOUTUBE_API_KEY` | server | optional |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | server | optional |
 | `QUOTA_TIMEZONE` | server | optional (default `Asia/Dhaka`) |

@@ -1,7 +1,7 @@
 import admin from "firebase-admin";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { buildTasksMappingDoc, mappingDocRef } from "@/lib/server/googleSyncState";
-import type { SyncBase } from "@/lib/server/googleSyncMapping";
+import { mappingRemovalAction, type SyncBase } from "@/lib/server/googleSyncMapping";
 import type { GoalWriteResult } from "@/lib/server/goalSyncStore";
 
 /**
@@ -87,7 +87,7 @@ export async function deleteGoalWithTasksMapping(uid: string, goalId: string, ex
 
     tx.delete(ref);
     if (mapSnap.exists) {
-      if (mapSnap.data()?.calendar) tx.update(mapRef, { tasks: admin.firestore.FieldValue.delete() });
+      if (mappingRemovalAction(mapSnap.data(), "tasks") === "delete_block") tx.update(mapRef, { tasks: admin.firestore.FieldValue.delete() });
       else tx.delete(mapRef);
     }
     return "ok" as const;

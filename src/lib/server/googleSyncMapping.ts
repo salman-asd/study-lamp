@@ -204,3 +204,16 @@ export function computeSyncCounts(input: {
 
   return counts;
 }
+
+export type MappingBlock = "calendar" | "tasks";
+
+/**
+ * What deleting ONE service's link from a goal's mapping doc must do (audit M1). The doc holds a `calendar` and a
+ * `tasks` block side by side, so removing the goal's Calendar link must not drop its Tasks link (and the other way
+ * round). "delete_doc": nothing else lives in the doc. "delete_block": the other service's block stays.
+ */
+export function mappingRemovalAction(data: { calendar?: unknown; tasks?: unknown } | null | undefined, block: MappingBlock): "none" | "delete_doc" | "delete_block" {
+  if (!data) return "none";
+  const other: MappingBlock = block === "calendar" ? "tasks" : "calendar";
+  return data[other] ? "delete_block" : "delete_doc";
+}

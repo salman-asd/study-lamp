@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarSyncCard } from "@/components/sync/CalendarSyncCard";
 import { TasksSyncCard } from "@/components/sync/TasksSyncCard";
 import { ConfirmActionDialog } from "@/components/sync/ConfirmActionDialog";
-import { writeCalendarFlag } from "@/lib/googleCalendarFlag";
+import { cacheSyncStateFromConnections } from "@/lib/googleCalendarFlag";
 import { disconnectGoogleConnection, listGoogleConnections, startGoogleConnect } from "@/lib/googleClient";
 import type { GoogleConnectionSummary, GoogleWorkspaceFeature } from "@/types";
 import { CalendarRange, CheckCircle2, ListTodo, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -46,8 +46,8 @@ function GoogleWorkspaceContent() {
       const idToken = await user.getIdToken();
       const list = await listGoogleConnections(idToken);
       setConnections(list);
-      // Keep the cached "is Calendar sync on?" flag honest for the goals page.
-      writeCalendarFlag(user.uid, list.some((connection) => connection.calendarEnabled && connection.status === "active"));
+      // Keep the cached "is Calendar / Tasks sync on, and for which connection?" state honest for the goals page.
+      cacheSyncStateFromConnections(user.uid, list);
     } catch (error: any) {
       toast.error(error?.message || "Failed to load your Google Workspace connections.");
     } finally {
@@ -116,7 +116,7 @@ function GoogleWorkspaceContent() {
     await disconnectGoogleConnection(idToken, connection.id);
     const remaining = connections.filter((c) => c.id !== connection.id);
     setConnections(remaining);
-    writeCalendarFlag(user.uid, remaining.some((c) => c.calendarEnabled && c.status === "active"));
+    cacheSyncStateFromConnections(user.uid, remaining);
     toast.success("Disconnected. Anything already in Google was left untouched.");
   }
 

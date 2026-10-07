@@ -17,8 +17,10 @@ export function syncErrorResponse(label: string, error: unknown): NextResponse {
       scope_missing: "This Google connection does not have the needed Google access.",
       calendar_deleted: "The Study Lamp calendar was deleted in Google. Turn Calendar sync on again to create a new one.",
       tasks_list_deleted: "The Study Lamp task list was deleted in Google. Turn Tasks sync on again to create a new one.",
+      ambiguous: "More than one Google connection has this sync turned on. Open Settings > Google Workspace and keep it on for just one.",
     };
-    return NextResponse.json({ error: messages[error.code] }, { status });
+    // `code` lets the browser show the "choose one connection" banner instead of a silent no-op (audit M2).
+    return NextResponse.json({ error: messages[error.code], ...(error.code === "ambiguous" ? { code: "ambiguous" } : {}) }, { status });
   }
   if (error instanceof CalendarListTruncatedError) {
     return NextResponse.json({ error: "The Study Lamp calendar has too many events to compare safely." }, { status: 409 });

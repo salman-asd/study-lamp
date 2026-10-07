@@ -33,10 +33,22 @@ export class PlanTokenVerificationError extends Error {
 const PLAN_TOKEN_PREFIX = "sync-plan.v1|";
 const PLAN_SCOPES: readonly PlanScope[] = ["calendar", "tasks", "docs_append", "sheets_append", "remove"];
 
+/**
+ * The HMAC key for plan tokens. PREFERRED: a dedicated GOOGLE_SYNC_SIGNING_SECRET, so a leaked Drive URL secret can
+ * never be used to forge a plan token (audit M5). FALLBACK: DRIVE_URL_SIGNING_SECRET, kept so existing deployments
+ * keep working without a new variable; it still cannot be confused with a Drive URL because every plan token is
+ * signed over the "sync-plan.v1|" prefix. An empty value counts as unset.
+ */
+export function planTokenSecretSource(env: Record<string, string | undefined> = process.env): "GOOGLE_SYNC_SIGNING_SECRET" | "DRIVE_URL_SIGNING_SECRET" | null {
+  if (env.GOOGLE_SYNC_SIGNING_SECRET) return "GOOGLE_SYNC_SIGNING_SECRET";
+  if (env.DRIVE_URL_SIGNING_SECRET) return "DRIVE_URL_SIGNING_SECRET";
+  return null;
+}
+
 function signingSecret(): string {
-  const secret = process.env.DRIVE_URL_SIGNING_SECRET ?? process.env.GOOGLE_SYNC_SIGNING_SECRET;
-  if (!secret) throw new Error("No signing secret configured for sync plan tokens.");
-  return secret;
+  const source = planTokenSecretSource();
+  if (!source) throw new Error("No signing secret configured for sync plan tokens.");
+  return process.env[source] as string;
 }
 
 function signatureForPayload(body: string): string {
