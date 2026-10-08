@@ -1,4 +1,5 @@
 import { adminDb } from "@/lib/server/firebase-admin";
+import { logServerError } from "@/lib/server/logError";
 import { OwnershipCache, chunkItems, groupBy } from "@/lib/server/ownershipCache";
 
 /**
@@ -68,7 +69,7 @@ export async function queryOwnedFileIds(uid: string, connectionId: string, fileI
   // We don't know playlistId, so use a collectionGroup query and confirm the
   // matched doc's path actually belongs to this uid (Firestore collectionGroup
   // queries span all users, so the path check is the ownership boundary).
-  const [videoMatch, documentMatch] = await Promise.all([
+  const [videoResult, documentResult] = await Promise.allSettled([
     adminDb
       .collectionGroup("videos")
       .where("driveConnectionId", "==", connectionId)
@@ -84,11 +85,23 @@ export async function queryOwnedFileIds(uid: string, connectionId: string, fileI
       .get(),
   ]);
 
+  // The two lookups are independent. A failing videos collection-group query (for
+  // example the index from firestore.indexes.json is not deployed yet) must not
+  // take down PDF/Excel/Word ownership, and the other way round. Fail only when
+  // BOTH fail, so a real outage is still reported as an error.
+  if (videoResult.status === "rejected" && documentResult.status === "rejected") throw documentResult.reason;
+  if (videoResult.status === "rejected") logServerError("Drive ownership: videos lookup failed", videoResult.reason);
+  if (documentResult.status === "rejected") logServerError("Drive ownership: documents lookup failed", documentResult.reason);
+
   const ownedIds = new Set<string>();
-  for (const doc of videoMatch.docs) {
-    if (doc.ref.path.startsWith(`users/${uid}/personalPlaylists/`)) ownedIds.add(doc.get("driveFileId") as string);
+  if (videoResult.status === "fulfilled") {
+    for (const doc of videoResult.value.docs) {
+      if (doc.ref.path.startsWith(`users/${uid}/personalPlaylists/`)) ownedIds.add(doc.get("driveFileId") as string);
+    }
   }
-  for (const doc of documentMatch.docs) ownedIds.add(doc.get("driveFileId") as string);
+  if (documentResult.status === "fulfilled") {
+    for (const doc of documentResult.value.docs) ownedIds.add(doc.get("driveFileId") as string);
+  }
   return Array.from(ownedIds, (fileId) => ownedKey({ fileId, connectionId }));
 }
 

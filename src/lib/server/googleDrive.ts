@@ -205,6 +205,7 @@ export async function getFileMetadata(accessToken: string, fileId: string): Prom
   assertDriveId(fileId);
   const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${FILE_FIELDS}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
   });
   if (res.status === 404) {
     throw new DriveApiError(404, "Drive can't access that file. Pick it again using the connected Google account.", "not_found");
@@ -250,7 +251,7 @@ async function listFolderFiles(accessToken: string, folderId: string, mimeClause
   do {
     const q = encodeURIComponent(`'${folderId}' in parents and trashed = false and ${mimeClause}`);
     const url = `${DRIVE_API}/files?q=${q}&fields=nextPageToken,files(${FILE_FIELDS})&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true${pageToken ? `&pageToken=${pageToken}` : ""}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
     if (!res.ok) throw new DriveApiError(res.status, `Unable to list the Drive folder's contents (${res.status}).`);
     const data = await res.json();
     files.push(...(data.files || []));
@@ -267,13 +268,14 @@ export async function fetchFileContent(accessToken: string, fileId: string, rang
   assertDriveId(fileId);
   const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
   if (range) headers.Range = range;
-  return fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers });
+  // no-store: Next's fetch data cache cannot hold bodies over 2 MB and would log an error for every large file.
+  return fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers, cache: "no-store" });
 }
 
 /** Proxies a Drive-hosted thumbnail (thumbnailLink requires the same OAuth
  *  session that owns the file — it isn't a public URL). */
 export async function fetchThumbnail(accessToken: string, thumbnailLink: string): Promise<Response> {
-  return fetch(thumbnailLink, { headers: { Authorization: `Bearer ${accessToken}` } });
+  return fetch(thumbnailLink, { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
 }
 
 /** Finds (or creates) a top-level "Study Lamp Backups" folder in the
@@ -405,6 +407,7 @@ export async function exportFile(accessToken: string, fileId: string, exportMime
   }
   const res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
   });
   if (!res.ok) {
     // Only the machine-readable reason is read from Google's body; the body itself is never kept or logged.

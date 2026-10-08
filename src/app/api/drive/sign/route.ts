@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { findOwnedDriveFiles, ownedKey } from "@/lib/server/driveOwnership";
 import { isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { logServerError } from "@/lib/server/logError";
-import { signDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
+import { DriveSigningConfigError, signDriveUrl, type DriveUrlPurpose } from "@/lib/server/driveSignedUrl";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
 
 export const runtime = "nodejs";
@@ -63,6 +63,11 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
 
     return NextResponse.json({ urls }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
+    if (error instanceof DriveSigningConfigError) {
+      // Server misconfiguration: the same for every user, so say so instead of a vague 500.
+      logServerError("Drive URL signing is not configured (set DRIVE_URL_SIGNING_SECRET)", error);
+      return NextResponse.json({ error: "Drive URL signing is not configured on the server." }, { status: 503 });
+    }
     logServerError("Failed to sign Drive URLs", error);
     return NextResponse.json({ error: "Couldn't prepare Drive URLs." }, { status: 500 });
   }

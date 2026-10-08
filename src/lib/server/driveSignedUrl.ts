@@ -27,9 +27,17 @@ export const DRIVE_URL_TTL_SECONDS: Record<DriveUrlPurpose, number> = {
 // account revokes its Google credentials, so subsequent proxy requests cannot
 // refresh or use access once Google rejects the revoked connection.
 
+/** Thrown when DRIVE_URL_SIGNING_SECRET is missing, so logs and routes can tell it apart from other failures. */
+export class DriveSigningConfigError extends Error {
+  constructor() {
+    super("DRIVE_URL_SIGNING_SECRET is not configured.");
+    this.name = "DriveSigningConfigError";
+  }
+}
+
 function signingSecret(): string {
   const secret = process.env.DRIVE_URL_SIGNING_SECRET;
-  if (!secret) throw new Error("DRIVE_URL_SIGNING_SECRET is not configured.");
+  if (!secret) throw new DriveSigningConfigError();
   return secret;
 }
 
