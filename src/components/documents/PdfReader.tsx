@@ -49,6 +49,7 @@ export function PdfReader({
   const [activeSourceUrl, setActiveSourceUrl] = React.useState(sourceUrl);
   const [reloading, setReloading] = React.useState(false);
   const [documentReady, setDocumentReady] = React.useState(false);
+  const [slowLoad, setSlowLoad] = React.useState(false);
   const [currentPage, setCurrentPage] = React.useState(Math.max(1, initialPage));
   const latestUrl = React.useRef(activeSourceUrl);
   const latestRefresh = React.useRef(refreshSourceUrl);
@@ -114,6 +115,16 @@ export function PdfReader({
     if (annotationExportTimer.current) clearTimeout(annotationExportTimer.current);
     registry.current = null;
   }, []);
+
+  // Never leave the person staring at a skeleton with no explanation: after 20 s
+  // without the document opening, show a hint with ways out. Nothing is torn down,
+  // so a slow-but-working load still completes normally.
+  React.useEffect(() => {
+    setSlowLoad(false);
+    if (documentReady || !activeSourceUrl || readerError) return;
+    const timer = setTimeout(() => setSlowLoad(true), 20_000);
+    return () => clearTimeout(timer);
+  }, [documentReady, activeSourceUrl, readerError]);
 
   React.useEffect(() => {
     if (!requestedPage || !documentReady || !registry.current) return;
@@ -201,6 +212,8 @@ export function PdfReader({
       if (event.documentId !== PDF_DOCUMENT_ID || retrying.current) return;
       const failure = event.reason ?? { code: event.code, message: event.message };
       const message = `${event.message} ${failure.message || ""}`.trim();
+      // Browser console only; URLs are stripped because the Drive link carries a signature.
+      console.warn("PDF reader error", { code: failure.code, message: message.replace(/https?:\/\/\S+/g, "<url>").slice(0, 200) });
       const code = failure.code;
       if (code === 4 || /password/i.test(message)) {
         setReaderError("This PDF is password-protected. Open it in Drive to unlock or download it.");
@@ -305,6 +318,15 @@ export function PdfReader({
             <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
           </div>
           <Skeleton className="mx-auto h-[calc(80%-1rem)] w-4/5" />
+          {slowLoad && (
+            <div className="absolute inset-x-4 bottom-4 flex flex-col items-center gap-2 rounded-md border border-border bg-card p-3 text-center text-sm text-muted-foreground shadow-sm">
+              <p>Still loading. Large files can take a minute to come from Drive. If nothing appears, open it another way.</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={onDownload}><Download className="mr-1.5 h-4 w-4" />Download</Button>
+                <Button asChild size="sm"><a href={driveViewUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" />Open in browser viewer</a></Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
       {reloading && (
