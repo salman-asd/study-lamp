@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { RotateCcw } from "lucide-react";
+import { Languages, RotateCcw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAiLanguageContext } from "@/components/ai/AiLanguageProvider";
-import { AI_LANGUAGE_LABELS } from "@/lib/aiLanguageState";
+import { AI_LANGUAGE_LABELS, languagePickerTitle } from "@/lib/aiLanguageState";
 import type { AiLanguage } from "@/lib/ai/types";
 
 interface AiLanguagePickerProps {
@@ -22,10 +22,19 @@ export function AiLanguagePicker({ value, onChange, disabled, label = "Language"
   const overridden = value !== defaultLanguage;
   // One id per instance: several pickers can be on the same page.
   const labelId = React.useId();
+  // A page that passes its own label keeps the visible text (hidden below sm); the default label becomes an icon.
+  const customLabel = label !== "Language";
 
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span id={labelId} className="whitespace-nowrap">{label}</span>
+      {customLabel ? (
+        <span id={labelId} className="hidden whitespace-nowrap sm:inline">{label}</span>
+      ) : (
+        <>
+          <Languages className="h-3.5 w-3.5" aria-hidden />
+          <span id={labelId} className="sr-only">{label}</span>
+        </>
+      )}
       <Select
         value={value}
         onValueChange={(next) => {
@@ -33,13 +42,27 @@ export function AiLanguagePicker({ value, onChange, disabled, label = "Language"
         }}
         disabled={disabled}
       >
-        <SelectTrigger className="h-8 w-44" aria-labelledby={labelId} aria-label={label === "Language" ? "AI response language" : label}>
+        <SelectTrigger
+          className="h-8 w-[4.5rem] px-2"
+          aria-labelledby={labelId}
+          aria-label={label === "Language" ? "AI response language" : label}
+          title={languagePickerTitle(value, defaultLanguage)}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {(["en", "bn"] as const).map((language) => (
-            <SelectItem key={language} value={language}>
-              {AI_LANGUAGE_LABELS[language]}{language === defaultLanguage ? " · default" : ""}
+            <SelectItem
+              key={language}
+              value={language}
+              title={language === defaultLanguage ? "Default language" : undefined}
+              suffix={
+                language === defaultLanguage ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" title="Default language" aria-hidden />
+                ) : undefined
+              }
+            >
+              {AI_LANGUAGE_LABELS[language]}
             </SelectItem>
           ))}
         </SelectContent>

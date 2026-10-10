@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
-import { logServerError } from "@/lib/server/logError";
+import { withDriveAccessToken } from "@/lib/server/driveConnections";
+import { driveRouteErrorResponse } from "@/lib/server/driveRouteError";
 import { getOrCreateBackupFolder, listBackupFiles } from "@/lib/server/googleDrive";
 import { isValidDriveConnectionId } from "@/lib/server/googleDrive";
 import { withAuthedRoute } from "@/lib/server/routeHelpers";
@@ -19,10 +19,6 @@ export const GET = withAuthedRoute(async ({ uid, req }) => {
     });
     return NextResponse.json({ backups: files.map((f) => ({ fileId: f.id, name: f.name })) });
   } catch (err) {
-    if (err instanceof DriveConnectionError) {
-      return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
-    }
-    logServerError("Listing Drive backups failed", err);
-    return NextResponse.json({ error: "Couldn't list backups from Drive." }, { status: 502 });
+    return driveRouteErrorResponse(uid, connectionId, err, { logLabel: "Listing Drive backups failed", fallbackMessage: "Couldn't list backups from Drive." });
   }
 }, { scope: "drive:backup-list" });

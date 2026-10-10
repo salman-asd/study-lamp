@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isLanguageOverridden, nextOverride, resolveEffectiveLanguage, resolveRequestLanguage } from "./aiLanguageState";
+import { isLanguageOverridden, languagePickerTitle, nextOverride, resolveEffectiveLanguage, resolveRequestLanguage } from "./aiLanguageState";
 import { isBengaliText, langAttributeFor } from "./bengali";
 import { languageInstruction } from "./ai/prompts";
 import { isAiLanguage, resolveAiLanguage, type AiPreferences } from "./server/aiPreferences";
@@ -79,5 +79,23 @@ describe("resolveRequestLanguage", () => {
   it("still honours a manual pick when the default failed to load", () => {
     assert.equal(resolveRequestLanguage({ defaultLanguage: "en", override: "bn", loadFailed: true }), "bn");
     assert.equal(resolveRequestLanguage({ defaultLanguage: "en", override: "en", loadFailed: true }), "en");
+  });
+});
+
+describe("languagePickerTitle", () => {
+  it("names the default when the default is selected", () => {
+    assert.equal(languagePickerTitle("en", "en"), "Default language: EN");
+    assert.equal(languagePickerTitle("bn", "bn"), "Default language: BN");
+  });
+
+  it("explains an override and names the saved default", () => {
+    assert.equal(
+      languagePickerTitle("bn", "en"),
+      "Using BN for this generation (your default is EN). Click the reset icon to go back."
+    );
+    assert.equal(
+      languagePickerTitle("en", "bn"),
+      "Using EN for this generation (your default is BN). Click the reset icon to go back."
+    );
   });
 });

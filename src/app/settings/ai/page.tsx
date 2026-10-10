@@ -265,7 +265,7 @@ function AiConnectionsContent() {
               }}
               disabled={savingPreference}
             >
-              <SelectTrigger className="w-36" aria-label="Generating language">
+              <SelectTrigger className="w-24" aria-label="Generating language">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

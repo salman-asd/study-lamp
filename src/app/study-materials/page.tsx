@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DriveImportPanel } from "@/components/drive/DriveImportPanel";
-import { SearchableTagMultiSelect, TagCategoryPicker } from "@/components/shared/TagCategoryPicker";
+import { SearchableTagMultiSelect, SelectedTagChips, TagCategoryPicker } from "@/components/shared/TagCategoryPicker";
 import {
   deletePersonalDocument,
   listPersonalDocuments,
@@ -215,26 +215,11 @@ function StudyMaterialsContent() {
           </TabsList>
 
           <TabsContent value={activeType} className="space-y-4">
-            <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3">
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_12rem_minmax(13rem,auto)_11rem_auto]">
-                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search titles" aria-label="Search study materials" />
-                <Select value={categoryId || "all"} onValueChange={(value) => setCategoryId(value === "all" ? "" : value)}>
-                  <SelectTrigger aria-label="Filter by category"><SelectValue placeholder="All categories" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All categories</SelectItem>
-                    {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <SearchableTagMultiSelect tags={tags} selectedTagIds={tagIds} onChange={setTagIds} />
-                <Select value={sort} onValueChange={(value) => setSort(value as StudyMaterialSort)}>
-                  <SelectTrigger aria-label="Sort study materials"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="recent">Recently added</SelectItem>
-                    <SelectItem value="title">Title</SelectItem>
-                    <SelectItem value="size">File size</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center justify-end gap-1">
+            <div className="flex min-w-0 flex-col gap-3 rounded-md border border-border bg-card p-3">
+              {/* Layout follows the CARD width, not the window width: rows wrap instead of overflowing. */}
+              <div className="flex min-w-0 items-center gap-2">
+                <Input className="min-w-0 flex-1" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search titles" aria-label="Search study materials" />
+                <div className="flex shrink-0 items-center gap-1">
                   <Button type="button" variant={viewMode === "grid" ? "secondary" : "ghost"} size="icon" title="Grid view" aria-label="Grid view" aria-pressed={viewMode === "grid"} onClick={() => setViewMode("grid")}>
                     <LayoutGrid className="h-4 w-4" />
                   </Button>
@@ -243,6 +228,31 @@ function StudyMaterialsContent() {
                   </Button>
                 </div>
               </div>
+              <div className="flex min-w-0 flex-wrap gap-2">
+                <div className="min-w-[10rem] flex-1 basis-[10rem]">
+                  <Select value={categoryId || "all"} onValueChange={(value) => setCategoryId(value === "all" ? "" : value)}>
+                    <SelectTrigger aria-label="Filter by category"><SelectValue placeholder="All categories" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-[10rem] flex-1 basis-[10rem]">
+                  <SearchableTagMultiSelect tags={tags} selectedTagIds={tagIds} onChange={setTagIds} />
+                </div>
+                <div className="min-w-[10rem] flex-1 basis-[10rem]">
+                  <Select value={sort} onValueChange={(value) => setSort(value as StudyMaterialSort)}>
+                    <SelectTrigger aria-label="Sort study materials"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="recent">Recently added</SelectItem>
+                      <SelectItem value="title">Title</SelectItem>
+                      <SelectItem value="size">File size</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <SelectedTagChips tags={tags} selectedTagIds={tagIds} onChange={setTagIds} />
               {(categoryId || tagIds.length > 0 || query) && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <SlidersHorizontal className="h-3.5 w-3.5" />

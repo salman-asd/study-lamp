@@ -61,20 +61,25 @@ export const POST = withAuthedRoute(async ({ uid }) => {
           if (isLegacy) {
             await migrateLegacyThumbnail(uid, target);
           } else {
+            let stored = false;
             try {
               const image = await withDriveAccessToken(uid, target.connectionId, async (accessToken) => {
                 const metadata = await getFileMetadata(accessToken, target.fileId);
                 return fetchAndStoreDriveThumbnail(accessToken, metadata.thumbnailLink);
               });
-              if (image) await saveDriveThumbnail(uid, target.connectionId, target.fileId, image);
+              if (image) {
+                await saveDriveThumbnail(uid, target.connectionId, target.fileId, image);
+                stored = true;
+              }
             } catch (error) {
               if (!(error instanceof DriveConnectionError)) {
                 logServerError("Drive thumbnail backfill item failed", error);
               }
             }
             // Mark as attempted even on failure so one bad file can't stall the queue;
-            // the thumbnail route still self-heals when the item is viewed.
-            await markThumbnailAttempted(target);
+            // the thumbnail route still self-heals when the item is viewed. An item that stored no
+            // image is flagged `thumbnailFailed` so Settings can count it and offer "Retry failed".
+            await markThumbnailAttempted(target, !stored);
           }
           succeeded++;
         } catch (error) {

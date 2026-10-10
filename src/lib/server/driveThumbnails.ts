@@ -299,6 +299,7 @@ async function countTargets(uid: string, build: CollectionBuilder): Promise<numb
 // spans ALL users and cannot be scoped to one uid.
 const legacyQuery: CollectionBuilder = (collection) => collection.where("thumbnailData", "!=", null);
 const unattemptedQuery: CollectionBuilder = (collection) => collection.where("thumbnailAttemptedAt", "==", null);
+const failedQuery: CollectionBuilder = (collection) => collection.where("thumbnailFailed", "==", true);
 
 export function listLegacyThumbnailTargets(uid: string, limit: number): Promise<DriveThumbnailTarget[]> {
   return collectTargets(uid, legacyQuery, limit);
@@ -311,6 +312,14 @@ export function listUnattemptedThumbnailTargets(uid: string, limit: number): Pro
 }
 export function countUnattemptedThumbnails(uid: string): Promise<number> {
   return countTargets(uid, unattemptedQuery);
+}
+
+/** Items whose last backfill attempt stored no image (Google had none, or the fetch failed). */
+export function listFailedThumbnailTargets(uid: string, limit: number): Promise<DriveThumbnailTarget[]> {
+  return collectTargets(uid, failedQuery, limit);
+}
+export function countFailedThumbnails(uid: string): Promise<number> {
+  return countTargets(uid, failedQuery);
 }
 
 /** True for a Drive-backed doc whose `thumbnailAttemptedAt` field is MISSING (not just null). Pure, for tests. */
@@ -378,10 +387,31 @@ export async function migrateLegacyThumbnail(uid: string, target: DriveThumbnail
   });
 }
 
-/** Records that a thumbnail fetch was attempted (and makes sure the marker exists). */
-export async function markThumbnailAttempted(target: DriveThumbnailTarget): Promise<void> {
+/**
+ * Records that a thumbnail fetch was attempted (and makes sure the marker exists).
+ * `failed` = no image was stored; it is remembered so Settings can count and retry those items.
+ */
+export async function markThumbnailAttempted(target: DriveThumbnailTarget, failed: boolean = false): Promise<void> {
   await target.ref.update({
     ...(target.hasMarker ? {} : { thumbnailUrl: driveThumbnailMarker(target.fileId, target.connectionId) }),
     thumbnailAttemptedAt: admin.firestore.FieldValue.serverTimestamp(),
+    thumbnailFailed: failed ? true : admin.firestore.FieldValue.delete(),
   });
+}
+
+/**
+ * Makes failed items visible to the backfill again (attempted -> never attempted).
+ * Writes only to the given targets; never deletes a document or a stored thumbnail.
+ */
+export async function resetThumbnailAttempts(targets: readonly DriveThumbnailTarget[]): Promise<number> {
+  if (targets.length === 0) return 0;
+  const batch = adminDb.batch();
+  for (const target of targets) {
+    batch.update(target.ref, {
+      thumbnailAttemptedAt: null,
+      thumbnailFailed: admin.firestore.FieldValue.delete(),
+    });
+  }
+  await batch.commit();
+  return targets.length;
 }

@@ -47,10 +47,19 @@ const SelectContent = React.forwardRef<
 ));
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
+interface SelectItemProps extends React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> {
+  /**
+   * Muted marker shown on the right of the item in the open list only. It is rendered OUTSIDE
+   * ItemText on purpose: Radix copies ItemText into the closed trigger, so anything placed in
+   * `children` would also show there.
+   */
+  suffix?: React.ReactNode;
+}
+
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+  SelectItemProps
+>(({ className, children, suffix, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
@@ -63,6 +72,7 @@ const SelectItem = React.forwardRef<
       <SelectPrimitive.ItemIndicator><Check className="h-4 w-4" /></SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    {suffix ? <span className="ml-auto flex items-center pl-3 text-xs text-muted-foreground">{suffix}</span> : null}
   </SelectPrimitive.Item>
 ));
 SelectItem.displayName = SelectPrimitive.Item.displayName;

@@ -14,6 +14,7 @@ import {
 } from "@/lib/server/driveConnectionResolver";
 import { DriveTokenCache } from "@/lib/server/driveTokenCache";
 import { runWithDriveToken } from "@/lib/server/driveRequest";
+import { RejectionThrottle, markConnectionRejected, type RejectionStore } from "@/lib/server/driveErrors";
 import type { DriveConnectionSummary } from "@/types";
 
 // Step G5: a Drive connection id can now be a legacy id (users/{uid}/driveConnections/{id}) or a unified id
@@ -252,6 +253,36 @@ export class DriveConnectionError extends Error {
   code: "not_found" | "invalid" | "network";
   constructor(code: "not_found" | "invalid" | "network", message: string) {
     super(message);
+    // Recognised by name in driveErrors.ts (mapDriveRouteError) so that file stays free of server imports.
+    this.name = "DriveConnectionError";
     this.code = code;
   }
+}
+
+const rejectionThrottle = new RejectionThrottle();
+
+/** Firestore side of "Google rejected this connection's token even after a fresh one": flags the doc that holds it. */
+const firestoreRejectionStore: RejectionStore = {
+  invalidateToken: invalidateAccessToken,
+  async markInvalid(uid, connectionId) {
+    const resolved = await resolveDriveConnectionId(uid, connectionId);
+    if (!resolved) return false;
+    const ref = resolved.kind === "legacy" ? connectionsRef(uid).doc(resolved.id) : googleConnectionsRef(uid).doc(resolved.id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    if (snap.get("status") === "invalid") return false;
+    // Only the status changes: grantedScopes, tokens and every other field are left alone and nothing is deleted.
+    await ref.update({ status: "invalid" });
+    if (resolved.kind === "google") invalidateAccessToken(uid, resolved.id);
+    return true;
+  },
+};
+
+/**
+ * Called when Google answered 401 even after a fresh access token was tried (the saved permission was revoked
+ * or expired). Marks the connection "invalid" so Settings and the Backups page offer "Reconnect Google".
+ * At most one write per connection per hour per server instance.
+ */
+export function markDriveConnectionRejected(uid: string, connectionId: string): Promise<boolean> {
+  return markConnectionRejected(firestoreRejectionStore, rejectionThrottle, uid, connectionId);
 }

@@ -7,11 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getDriveMigrationStatus, getLegacyDriveCleanupStatus, runDriveMigration, runLegacyDriveCleanup } from "@/lib/googleClient";
-import { backfillDriveThumbnails, listDriveConnections, disconnectDrive, startDriveConnect } from "@/lib/driveClient";
+import {
+  backfillDriveThumbnails,
+  disconnectDrive,
+  getDriveThumbnailStatus,
+  listDriveConnections,
+  pruneDriveThumbnails,
+  retryFailedDriveThumbnails,
+  startDriveConnect,
+} from "@/lib/driveClient";
+import { hasThumbnailsToFetch, shouldContinueThumbnailLoop, thumbnailStatusText, type ThumbnailStatus } from "@/lib/driveThumbnailStatus";
 import { cn } from "@/lib/utils";
 import { driveStatus, errorMessage } from "@/lib/googleSettings";
 import type { DriveConnectionSummary } from "@/types";
-import { HardDrive, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Eraser, HardDrive, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_LABEL = { connected: "Connected", needs_reconnect: "Needs reconnecting", not_connected: "Not connected" } as const;
@@ -25,6 +34,9 @@ export function DriveCard({ highlight = false }: { highlight?: boolean }) {
   const [disconnectingId, setDisconnectingId] = React.useState<string | null>(null);
   const [refreshingThumbnails, setRefreshingThumbnails] = React.useState(false);
   const [thumbnailsRemaining, setThumbnailsRemaining] = React.useState<number | null>(null);
+  const [thumbnailStatus, setThumbnailStatus] = React.useState<ThumbnailStatus | null>(null);
+  const [retryingThumbnails, setRetryingThumbnails] = React.useState(false);
+  const [pruningThumbnails, setPruningThumbnails] = React.useState(false);
   const [pendingMigration, setPendingMigration] = React.useState(0);
   const [migrating, setMigrating] = React.useState(false);
   const [cleanable, setCleanable] = React.useState(0);
@@ -35,7 +47,12 @@ export function DriveCard({ highlight = false }: { highlight?: boolean }) {
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      setConnections(await listDriveConnections(idToken));
+      const loaded = await listDriveConnections(idToken);
+      setConnections(loaded);
+      // Counts only when the card opens and there is a usable connection (aggregate count queries, cached 60 s).
+      if (loaded.some((connection) => connection.status !== "invalid")) {
+        setThumbnailStatus(await getDriveThumbnailStatus(idToken).catch(() => null));
+      }
       setPendingMigration((await getDriveMigrationStatus(idToken).catch(() => ({ pending: 0 }))).pending);
       setCleanable((await getLegacyDriveCleanupStatus(idToken).catch(() => ({ deletable: 0, blocked: 0 }))).deletable);
     } catch (error) {
@@ -109,26 +126,93 @@ export function DriveCard({ highlight = false }: { highlight?: boolean }) {
     }
   }
 
-  async function handleRefreshThumbnails() {
+  async function refreshThumbnailStatus(idToken: string) {
+    setThumbnailStatus(await getDriveThumbnailStatus(idToken, { fresh: true }).catch(() => null));
+  }
+
+  /** Calls the backfill until it reports nothing left. Stops if a round makes no progress. */
+  async function runThumbnailBackfill(idToken: string): Promise<number> {
+    let processed = 0;
+    let round = await backfillDriveThumbnails(idToken);
+    processed += round.processed;
+    setThumbnailsRemaining(round.remaining);
+    while (shouldContinueThumbnailLoop(round)) {
+      round = await backfillDriveThumbnails(idToken);
+      processed += round.processed;
+      setThumbnailsRemaining(round.remaining);
+    }
+    return processed;
+  }
+
+  async function handleFetchThumbnails() {
     if (!user || refreshingThumbnails) return;
     setRefreshingThumbnails(true);
     setThumbnailsRemaining(null);
-    let processed = 0;
     try {
       const idToken = await user.getIdToken();
-      let remaining = 1;
-      while (remaining > 0) {
-        const batch = await backfillDriveThumbnails(idToken);
-        processed += batch.processed;
-        remaining = batch.remaining;
-        setThumbnailsRemaining(remaining);
-      }
-      toast.success(processed ? `Refreshed ${processed} Drive thumbnails.` : "Drive thumbnails are up to date.");
+      const processed = await runThumbnailBackfill(idToken);
+      toast.success(processed ? `Checked ${processed} Drive thumbnail${processed === 1 ? "" : "s"}.` : "No missing Drive thumbnails.");
+      await refreshThumbnailStatus(idToken);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to refresh Drive thumbnails."));
+      toast.error(errorMessage(error, "Failed to fetch Drive thumbnails."));
     } finally {
       setRefreshingThumbnails(false);
       setThumbnailsRemaining(null);
+    }
+  }
+
+  async function handleRetryFailedThumbnails() {
+    if (!user || retryingThumbnails || refreshingThumbnails) return;
+    setRetryingThumbnails(true);
+    setThumbnailsRemaining(null);
+    try {
+      const idToken = await user.getIdToken();
+      // Reset the failed items (50 per call), then let the normal fetch pick them up again.
+      let totalReset = 0;
+      let round = await retryFailedDriveThumbnails(idToken);
+      totalReset += round.reset;
+      while (round.reset > 0 && round.remaining > 0) {
+        round = await retryFailedDriveThumbnails(idToken);
+        totalReset += round.reset;
+      }
+      if (totalReset === 0) {
+        toast.info("No failed thumbnails to retry.");
+      } else {
+        await runThumbnailBackfill(idToken);
+        toast.success(`Retried ${totalReset} thumbnail${totalReset === 1 ? "" : "s"}. Files Google has no preview for keep an icon.`);
+      }
+      await refreshThumbnailStatus(idToken);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to retry the failed thumbnails."));
+    } finally {
+      setRetryingThumbnails(false);
+      setThumbnailsRemaining(null);
+    }
+  }
+
+  async function handlePruneThumbnails() {
+    if (!user || pruningThumbnails) return;
+    setPruningThumbnails(true);
+    try {
+      const idToken = await user.getIdToken();
+      const preview = await pruneDriveThumbnails(idToken, { dryRun: true });
+      if (preview.remaining === 0) {
+        toast.info("No unused thumbnails to clean up.");
+        return;
+      }
+      if (!confirm(`Delete ${preview.remaining} unused thumbnail${preview.remaining === 1 ? "" : "s"}? They belong to videos or documents you already removed. Your Drive files and everything in Study Lamp stay as they are.`)) return;
+      let deleted = 0;
+      let round = await pruneDriveThumbnails(idToken);
+      deleted += round.pruned;
+      while (round.pruned > 0 && round.remaining > 0) {
+        round = await pruneDriveThumbnails(idToken);
+        deleted += round.pruned;
+      }
+      toast.success(`Removed ${deleted} unused thumbnail${deleted === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to clean up thumbnails."));
+    } finally {
+      setPruningThumbnails(false);
     }
   }
 
@@ -161,12 +245,6 @@ export function DriveCard({ highlight = false }: { highlight?: boolean }) {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {connections.some((connection) => connection.status !== "invalid") && (
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleRefreshThumbnails} disabled={refreshingThumbnails}>
-                  <RefreshCw className={`h-4 w-4 ${refreshingThumbnails ? "animate-spin" : ""}`} />
-                  {refreshingThumbnails ? `Refreshing${thumbnailsRemaining === null ? "…" : ` (${thumbnailsRemaining} left)`}` : "Refresh thumbnails"}
-                </Button>
-              )}
               {pendingMigration > 0 && (
                 <Button size="sm" variant="outline" onClick={handleMigrate} loading={migrating} loadingText="Moving…">
                   Merge into Google connection ({pendingMigration})
@@ -222,6 +300,56 @@ export function DriveCard({ highlight = false }: { highlight?: boolean }) {
               </Button>
             </div>
           ))}
+
+          {!loading && connections.some((connection) => connection.status !== "invalid") && (
+            <div className="space-y-2 rounded-md border border-border p-3" aria-label="Drive thumbnails">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-medium">Thumbnails</h3>
+                {thumbnailStatus && <p className="text-xs text-muted-foreground" aria-live="polite">{thumbnailStatusText(thumbnailStatus)}</p>}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Study Lamp saves a small preview image for each Drive file so lists load fast. This fetches previews that are
+                missing. Files that have no preview in Google Drive keep an icon.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={handleFetchThumbnails}
+                  disabled={refreshingThumbnails || retryingThumbnails || pruningThumbnails}
+                  title={thumbnailStatus && !hasThumbnailsToFetch(thumbnailStatus) ? "Nothing is missing right now. You can still run it." : undefined}
+                >
+                  <RefreshCw className={`h-4 w-4 ${refreshingThumbnails || retryingThumbnails ? "animate-spin" : ""}`} />
+                  {refreshingThumbnails || retryingThumbnails
+                    ? `Fetching${thumbnailsRemaining === null ? "…" : ` (${thumbnailsRemaining} left)`}`
+                    : "Fetch missing thumbnails"}
+                </Button>
+                {thumbnailStatus && thumbnailStatus.failed > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={handleRetryFailedThumbnails}
+                    disabled={refreshingThumbnails || retryingThumbnails || pruningThumbnails}
+                  >
+                    <RotateCcw className="h-4 w-4" /> Retry failed ({thumbnailStatus.failed})
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5"
+                  onClick={handlePruneThumbnails}
+                  loading={pruningThumbnails}
+                  loadingText="Cleaning…"
+                  disabled={refreshingThumbnails || retryingThumbnails}
+                >
+                  <Eraser className="h-4 w-4" /> Clean up unused thumbnails
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

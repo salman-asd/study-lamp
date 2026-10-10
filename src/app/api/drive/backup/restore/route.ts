@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { withDriveAccessToken, DriveConnectionError } from "@/lib/server/driveConnections";
-import { logServerError } from "@/lib/server/logError";
+import { withDriveAccessToken } from "@/lib/server/driveConnections";
+import { driveRouteErrorResponse } from "@/lib/server/driveRouteError";
 import { downloadJsonFile, isValidDriveConnectionId, isValidDriveId } from "@/lib/server/googleDrive";
 import { previewRestore, restoreBackup, type BackupPayload } from "@/lib/server/driveBackup";
 import { withAuthedRoute, readJsonObject } from "@/lib/server/routeHelpers";
@@ -39,10 +39,6 @@ export const POST = withAuthedRoute(async ({ uid, req }) => {
     const result = confirm ? await restoreBackup(uid, payload) : await previewRestore(uid, payload);
     return NextResponse.json({ confirmed: confirm, ...result });
   } catch (err) {
-    if (err instanceof DriveConnectionError) {
-      return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
-    }
-    logServerError("Drive restore failed", err);
-    return NextResponse.json({ error: "Couldn't restore from that backup." }, { status: 502 });
+    return driveRouteErrorResponse(uid, connectionId, err, { logLabel: "Drive restore failed", fallbackMessage: "Couldn't restore from that backup." });
   }
 }, { scope: "drive:backup-restore" });

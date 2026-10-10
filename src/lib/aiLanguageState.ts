@@ -41,3 +41,12 @@ export const AI_LANGUAGE_LABELS: Record<AiLanguage, string> = {
   en: "EN",
   bn: "BN",
 };
+
+/**
+ * Tooltip for the closed language picker (pure, so it is unit-testable).
+ * The closed control only shows "EN" / "BN"; this text explains whether that is the saved default.
+ */
+export function languagePickerTitle(value: AiLanguage, defaultLanguage: AiLanguage): string {
+  if (value === defaultLanguage) return `Default language: ${AI_LANGUAGE_LABELS[defaultLanguage]}`;
+  return `Using ${AI_LANGUAGE_LABELS[value]} for this generation (your default is ${AI_LANGUAGE_LABELS[defaultLanguage]}). Click the reset icon to go back.`;
+}

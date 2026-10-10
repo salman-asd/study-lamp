@@ -1,11 +1,26 @@
 import type { DriveConnectionSummary } from "@/types";
+import { normalizeThumbnailStatus, type ThumbnailStatus } from "@/lib/driveThumbnailStatus";
 
 // Thin client-side wrappers around the /api/drive/* routes, mirroring the
 // pattern in src/lib/aiConnectionsClient.ts.
 
+/** A failed /api/drive/* call. `code` is the server's machine-readable hint (currently only "reconnect"). */
+export class DriveRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "DriveRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function parseOrThrow(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    throw new DriveRequestError(data.error || `Request failed (${res.status})`, res.status, typeof data.code === "string" ? data.code : undefined);
+  }
   return data;
 }
 
@@ -242,6 +257,30 @@ export async function backfillDriveThumbnails(idToken: string): Promise<{ proces
   const res = await fetch("/api/drive/thumbnails/backfill", {
     method: "POST",
     headers: authHeaders(idToken),
+  });
+  return parseOrThrow(res);
+}
+
+export async function getDriveThumbnailStatus(idToken: string, options: { fresh?: boolean } = {}): Promise<ThumbnailStatus> {
+  // The route caches for 60 s; after the user acts we bypass the browser cache so the counts update.
+  const res = await fetch("/api/drive/thumbnails/status", {
+    headers: authHeaders(idToken),
+    ...(options.fresh ? { cache: "no-store" as const } : {}),
+  });
+  return normalizeThumbnailStatus(await parseOrThrow(res));
+}
+
+export async function retryFailedDriveThumbnails(idToken: string): Promise<{ reset: number; remaining: number }> {
+  const res = await fetch("/api/drive/thumbnails/retry-failed", { method: "POST", headers: authHeaders(idToken) });
+  return parseOrThrow(res);
+}
+
+/** `dryRun` counts what a clean-up would remove (`remaining`) without deleting anything. */
+export async function pruneDriveThumbnails(idToken: string, options: { dryRun?: boolean } = {}): Promise<{ pruned: number; remaining: number }> {
+  const res = await fetch("/api/drive/thumbnails/prune", {
+    method: "POST",
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ dryRun: options.dryRun === true }),
   });
   return parseOrThrow(res);
 }

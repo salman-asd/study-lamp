@@ -506,6 +506,8 @@ export interface PersonalVideo {
    *  POST /api/drive/thumbnails/backfill. Do not read this field. */
   thumbnailData?: string | null;
   thumbnailAttemptedAt?: Timestamp | null;
+  /** Set by the thumbnail backfill when the last attempt stored no image; cleared on success or by "Retry failed". */
+  thumbnailFailed?: boolean;
   durationSeconds?: number;
   description?: string | null;
   categoryId?: string | null;
@@ -696,6 +698,8 @@ export interface PersonalDocument {
   /** @deprecated Legacy base64 thumbnail; see PersonalVideo.thumbnailData. Do not read. */
   thumbnailData?: string | null;
   thumbnailAttemptedAt?: Timestamp | null;
+  /** Set by the thumbnail backfill when the last attempt stored no image; cleared on success or by "Retry failed". */
+  thumbnailFailed?: boolean;
   categoryId?: string | null;
   tagIds?: string[];
   readerProgress?: {
