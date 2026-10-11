@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AiLanguageProvider } from "@/components/ai/AiLanguageProvider";
+import { GeneralPrefsProvider } from "@/components/settings/GeneralPrefsProvider";
 import { AllVideosProvider } from "@/components/video/AllVideosProvider";
 import { TourProvider } from "@/components/tour/TourProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -36,12 +37,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <TooltipProvider delayDuration={200}>
             <AuthProvider>
               <AiLanguageProvider>
-                <AllVideosProvider>
-                  <TourProvider>
-                    {children}
-                    <Toaster richColors position="top-right" />
-                  </TourProvider>
-                </AllVideosProvider>
+                <GeneralPrefsProvider>
+                  <AllVideosProvider>
+                    <TourProvider>
+                      {children}
+                      <Toaster richColors position="top-right" />
+                    </TourProvider>
+                  </AllVideosProvider>
+                </GeneralPrefsProvider>
               </AiLanguageProvider>
             </AuthProvider>
           </TooltipProvider>

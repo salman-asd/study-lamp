@@ -1,5 +1,9 @@
 const FILE_ID = /^[A-Za-z0-9_-]{10,128}$/;
 
+export function isDriveFileId(fileId: string): boolean {
+  return FILE_ID.test(fileId);
+}
+
 /** "Open in Google" URL for a native Google Doc/Sheet, or null when the type or id is not valid. */
 export function googleOpenUrl(mimeType: string | undefined, fileId: string): string | null {
   if (!FILE_ID.test(fileId)) return null;

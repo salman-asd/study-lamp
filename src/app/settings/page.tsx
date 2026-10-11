@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 // (unrelated state and UI sharing a single scroll area). It's now split
 // into separate routes, matching the existing /settings/categories and
 // /settings/tags convention. This keeps old links/bookmarks to /settings
-// working by sending them to the AI Connections page.
+// working by sending them to the General page.
 export default function SettingsPage() {
-  redirect("/settings/ai");
+  redirect("/settings/general");
 }

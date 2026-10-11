@@ -7,8 +7,8 @@ import { RouteProgressBar } from "./RouteProgressBar";
 import { VerifyEmailBanner } from "@/components/auth/VerifyEmailBanner";
 
 export function AppShell({
-  children, onSearch,
-}: { children: React.ReactNode; onSearch?: (q: string) => void }) {
+  children, onSearch, focusMode = false,
+}: { children: React.ReactNode; onSearch?: (q: string) => void; /** Hides the sidebar and header (document reader focus mode). */ focusMode?: boolean }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   // Lets the guided tour open/close the mobile drawer (see components/tour/TourProvider).
@@ -26,13 +26,15 @@ export function AppShell({
     // sidebar and header included — out of view.
     <div className="flex h-screen overflow-hidden">
       <RouteProgressBar />
-      <React.Suspense fallback={null}>
-        <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
-      </React.Suspense>
+      {!focusMode && (
+        <React.Suspense fallback={null}>
+          <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+        </React.Suspense>
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header onMenuClick={() => setMobileOpen(true)} onSearch={onSearch} />
-        <VerifyEmailBanner />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">{children}</main>
+        {!focusMode && <Header onMenuClick={() => setMobileOpen(true)} onSearch={onSearch} />}
+        {!focusMode && <VerifyEmailBanner />}
+        <main className={focusMode ? "flex-1 overflow-y-auto overflow-x-hidden p-3" : "flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6"}>{children}</main>
       </div>
     </div>
   );

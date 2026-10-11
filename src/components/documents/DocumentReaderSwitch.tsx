@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ReaderProgressInput } from "@/lib/readerProgress";
 import type { PersonalDocument } from "@/types";
+import { GooglePreviewFrame } from "@/components/documents/GooglePreviewFrame";
+import type { ViewerKind } from "@/lib/documentViewer";
+import type { ReaderZoomPref } from "@/lib/generalPrefs";
 
 const PdfReader = dynamic(
   () => import("@/components/documents/PdfReader").then((module) => module.PdfReader),
@@ -46,13 +49,27 @@ export interface DocumentReaderSwitchProps {
   onAnnotationsChange: (annotations: unknown[]) => void;
   annotationStatus?: SaveStatus;
   onExplainPage: (pageNumber: number, pageText: string) => Promise<void>;
+  /** Which viewer to show; "reader" (default) is today's behaviour. */
+  viewer?: ViewerKind;
+  /** Embeddable Google preview URL for the preview viewers. */
+  previewUrl?: string | null;
+  /** Normal Google "open" link, shown next to the preview. */
+  openInGoogleUrl?: string | null;
+  onUseReader?: () => void;
+  /** Tailwind height classes for the PDF reading area. */
+  pdfHeightClass?: string;
+  zoomPref?: ReaderZoomPref;
 }
 
 /** PDF -> PDF reader; Word / Excel -> their readers; anything else -> Drive's own preview ("Open in Drive" fallback). */
 export function DocumentReaderSwitch({
   doc, signedStreamUrl, streamError, driveViewUrl, annotations, requestedPage, explainingPage,
   onDownload, onPlainText, refreshSourceUrl, onPageJumpHandled, onProgress, onAnnotationsChange, annotationStatus, onExplainPage,
+  viewer = "reader", previewUrl, openInGoogleUrl, onUseReader, pdfHeightClass, zoomPref,
 }: DocumentReaderSwitchProps) {
+  if (viewer !== "reader" && previewUrl) {
+    return <GooglePreviewFrame url={previewUrl} title={doc.title} openUrl={openInGoogleUrl ?? driveViewUrl} onUseReader={onUseReader ?? (() => undefined)} />;
+  }
   if (doc.fileType === "pdf") {
     return (
       <PdfReader
@@ -72,6 +89,9 @@ export function DocumentReaderSwitch({
         annotationStatus={annotationStatus}
         onExplainPage={onExplainPage}
         explainingPage={explainingPage}
+        heightClass={pdfHeightClass}
+        documentKey={doc.id}
+        zoomPref={zoomPref}
       />
     );
   }

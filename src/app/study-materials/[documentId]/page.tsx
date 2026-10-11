@@ -10,7 +10,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AiLanguagePicker } from "@/components/ai/AiLanguagePicker";
 import { DocumentReaderSwitch } from "@/components/documents/DocumentReaderSwitch";
 import { GoogleAppendMenu } from "@/components/documents/GoogleAppendMenu";
-import { DocumentStudyMobileSheet, DocumentStudyPanel } from "@/components/documents/DocumentStudyPanel";
+import { DocumentStudyDrawer, DocumentStudyMobileSheet, DocumentStudyPanel } from "@/components/documents/DocumentStudyPanel";
+import { ReaderToolbar } from "@/components/documents/ReaderToolbar";
+import { ViewerMenu } from "@/components/documents/ViewerMenu";
+import { useGeneralPrefs } from "@/components/settings/GeneralPrefsProvider";
+import {
+  previewUrl, readViewerOverride, resolveViewer, typeLabelPlural, viewerOptionsFor, viewerPrefKey, writeViewerOverride, type ViewerKind,
+} from "@/lib/documentViewer";
+import type { GeneralPrefs } from "@/lib/generalPrefs";
+import type { ViewerPrefKey } from "@/lib/documentViewer";
+import { pageGridClass, readerHeightClass, resolveStudyDock, type StudyDock } from "@/lib/readerLayout";
 import { useDocumentProgress } from "@/hooks/useDocumentProgress";
 import { useDocumentStudy } from "@/hooks/useDocumentStudy";
 import { getPersonalDocumentAnnotations, getPersonalDocumentClient } from "@/lib/firestore/personalDocuments";
@@ -18,8 +27,9 @@ import { getNote, getSummary } from "@/lib/firestore/notes";
 import { getSignedDriveUrls, refreshGoogleDocumentMeta, refreshSignedDriveUrl } from "@/lib/driveClient";
 import { formatGoogleModified, googleNativeLabel, googleOpenUrl } from "@/lib/googleLinks";
 import type { PersonalDocument } from "@/types";
-import { Download, ExternalLink } from "lucide-react";
+import { BookOpenText, Download, ExternalLink, Minimize2 } from "lucide-react";
 import { toast } from "sonner";
+import { errorMessage } from "@/lib/googleSettings";
 
 export default function StudyMaterialDetailPage() {
   return (
@@ -27,6 +37,17 @@ export default function StudyMaterialDetailPage() {
       <StudyMaterialDetailContent />
     </RequireAuth>
   );
+}
+
+function useViewportWidth(): number {
+  const [width, setWidth] = React.useState(1280);
+  React.useEffect(() => {
+    const update = () => setWidth(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return width;
 }
 
 function StudyMaterialDetailContent() {
@@ -37,6 +58,11 @@ function StudyMaterialDetailContent() {
   const [requestedPage, setRequestedPage] = React.useState<number | null>(null);
   const [signedStreamUrl, setSignedStreamUrl] = React.useState<string | null>(null);
   const [streamError, setStreamError] = React.useState<string | null>(null);
+  const { prefs, setPref } = useGeneralPrefs();
+  const viewportWidth = useViewportWidth();
+  const [focus, setFocus] = React.useState(false);
+  const [transientDock, setTransientDock] = React.useState<StudyDock | null>(null);
+  const [viewerOverride, setViewerOverride] = React.useState<ViewerKind | null>(null);
   const study = useDocumentStudy(user, documentId, doc);
   const { setSummary, setNote, setNotePageNumber } = study;
   const { annotations, setAnnotations, annotationStatus, queueReaderProgress, queueAnnotationSave } = useDocumentProgress(user, doc);
@@ -57,13 +83,28 @@ function StudyMaterialDetailContent() {
         setNote(cachedNote?.content ?? "");
         setNotePageNumber(cachedNote?.pageNumber ?? null);
         setAnnotations(cachedAnnotations);
-      } catch (error: any) {
-        toast.error(error?.message || "Failed to load this document.");
+      } catch (error: unknown) {
+        toast.error(errorMessage(error, "Failed to load this document."));
       } finally {
         setLoading(false);
       }
     })();
   }, [user, documentId, setSummary, setNote, setNotePageNumber, setAnnotations]);
+
+  // "Just this document" choice, kept only for this browser tab.
+  React.useEffect(() => {
+    setViewerOverride(documentId ? readViewerOverride(typeof window === "undefined" ? null : window.sessionStorage, documentId) : null);
+  }, [documentId]);
+
+  React.useEffect(() => {
+    if (!focus) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setFocus(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
+
+  const viewer: ViewerKind = doc ? resolveViewer(doc, prefs, viewerOverride) : "reader";
+  const embeddedUrl = doc && viewer !== "reader" ? previewUrl(doc, viewer) : null;
 
   // Google-native files: check Drive once per open and keep the stored "last changed" time current.
   const googleNativeId = doc?.googleNative ? doc.id : null;
@@ -85,7 +126,8 @@ function StudyMaterialDetailContent() {
     let active = true;
     setSignedStreamUrl(null);
     setStreamError(null);
-    if (!user || !doc || doc.fileType === "pptx") return () => { active = false; };
+    // A Google preview needs no signed Study Lamp link, so none is requested for it.
+    if (!user || !doc || doc.fileType === "pptx" || embeddedUrl) return () => { active = false; };
     void (async () => {
       try {
         const idToken = await user.getIdToken();
@@ -100,7 +142,7 @@ function StudyMaterialDetailContent() {
       }
     })();
     return () => { active = false; };
-  }, [user, doc]);
+  }, [user, doc, embeddedUrl]);
 
   async function refreshSignedStreamUrl(): Promise<string> {
     if (!user || !doc) throw new Error("Sign in again to reconnect to Google Drive.");
@@ -151,10 +193,28 @@ function StudyMaterialDetailContent() {
   const googleUrl = doc.googleNative ? googleOpenUrl(doc.mimeType, doc.driveFileId) : null;
   const lastChanged = doc.googleNative ? formatGoogleModified(doc.modifiedTime) : null;
   const jumpToNotePage = () => { if (study.notePageNumber) setRequestedPage(study.notePageNumber); };
+  const dock: StudyDock = transientDock ?? resolveStudyDock(prefs.studyDock, viewportWidth);
+  const viewerOptions = viewerOptionsFor(doc);
+  const prefKey = viewerPrefKey(doc);
+  const onGooglePreview = viewer !== "reader" && !!embeddedUrl;
+  const studyIsPdf = doc.fileType === "pdf" && !onGooglePreview;
+  const changeDock = (next: StudyDock) => { setTransientDock(null); void setPref("studyDock", next); };
+  const chooseForDocument = (kind: ViewerKind) => {
+    setViewerOverride(kind);
+    writeViewerOverride(window.sessionStorage, doc.id, kind);
+  };
+  const chooseForAll = (kind: ViewerKind) => {
+    setViewerOverride(null);
+    writeViewerOverride(window.sessionStorage, doc.id, null);
+    if (prefKey) void setPref(prefKey, kind as GeneralPrefs[ViewerPrefKey]);
+  };
 
   return (
-    <AppShell>
+    <AppShell focusMode={focus}>
       <div className="mx-auto max-w-[96rem] space-y-4">
+        {focus && (
+          <Button type="button" variant="secondary" size="sm" className="fixed right-3 top-3 z-40 gap-1.5 shadow" onClick={() => setFocus(false)}><Minimize2 className="h-4 w-4" />Exit focus (Esc)</Button>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="break-words font-display text-2xl font-semibold">{doc.title}</h1>
@@ -171,8 +231,20 @@ function StudyMaterialDetailContent() {
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.9fr)]">
-          <section className="min-w-0">
+        <ReaderToolbar dock={dock} onDockChange={changeDock} focus={focus} onFocusChange={setFocus}>
+          <ViewerMenu
+            options={viewerOptions}
+            active={viewer}
+            isDefault={viewerOverride === null || !viewerOptions.includes(viewerOverride)}
+            typeLabel={typeLabelPlural(doc)}
+            onJustThisDocument={chooseForDocument}
+            onUseForAll={chooseForAll}
+          />
+          {onGooglePreview && <span className="text-xs text-muted-foreground">Annotations, Explain this page, page jump and progress are off in the Google preview. Summary, quiz and notes still work.</span>}
+        </ReaderToolbar>
+
+        <div className={`grid min-w-0 gap-4 ${pageGridClass(dock)}`}>
+          <section className="min-w-0 space-y-3">
             <DocumentReaderSwitch
               doc={doc}
               signedStreamUrl={signedStreamUrl}
@@ -189,13 +261,26 @@ function StudyMaterialDetailContent() {
               onAnnotationsChange={queueAnnotationSave}
               annotationStatus={annotationStatus}
               onExplainPage={study.handleExplainPage}
+              viewer={viewer}
+              previewUrl={embeddedUrl}
+              openInGoogleUrl={googleUrl}
+              onUseReader={() => chooseForDocument("reader")}
+              pdfHeightClass={readerHeightClass(dock, focus)}
+              zoomPref={prefs.readerZoom}
             />
+            {dock === "bottom" && <DocumentStudyDrawer study={study} isPdf={studyIsPdf} onJumpToNotePage={jumpToNotePage} onHide={() => changeDock("hidden")} />}
           </section>
 
-          <DocumentStudyPanel study={study} isPdf={doc.fileType === "pdf"} onJumpToNotePage={jumpToNotePage} />
+          {dock === "right" && <DocumentStudyPanel study={study} isPdf={studyIsPdf} onJumpToNotePage={jumpToNotePage} />}
         </div>
 
-        <DocumentStudyMobileSheet study={study} isPdf={doc.fileType === "pdf"} onJumpToNotePage={jumpToNotePage} />
+        {dock === "hidden" && (
+          <Button type="button" className="fixed bottom-4 right-4 z-30 hidden h-11 gap-2 rounded-full shadow-lg lg:inline-flex" onClick={() => setTransientDock("bottom")}>
+            <BookOpenText className="h-4 w-4" />Study
+          </Button>
+        )}
+
+        <DocumentStudyMobileSheet study={study} isPdf={studyIsPdf} onJumpToNotePage={jumpToNotePage} />
       </div>
     </AppShell>
   );

@@ -15,7 +15,7 @@ Study Lamp asks Google for exactly four scopes and never widens them:
 
 If you are not comfortable with the Tasks scope, connect Drive and Calendar only.
 
-**`.env.local` must never be zipped, shared or committed.** It holds the Firebase Admin key, the encryption
+**`.env.local` and `.env.local.old` must never be zipped, shared or committed.** It holds the Firebase Admin key, the encryption
 key and every signing and OAuth secret. When you send the project to someone, exclude `.env.local` and
 `node_modules` (for example `zip -r src.zip . -x ".env*" "node_modules/*" ".next/*"`, then add `.env.example` back if wanted).
 If a zip with `.env.local` was shared anywhere, treat it as leaked and follow section 7.
@@ -77,6 +77,10 @@ Every Google write (Calendar, Tasks, Docs, Sheets) goes through preview -> confi
 ## 6. Content-Security-Policy
 
 `next.config.js` sends the CSP as **Report-Only** until `CSP_MODE=enforce` is set at build time. See `docs/deploy.md` for the switch-over checklist.
+
+## 6b. Google preview viewer (viewer choice)
+
+The optional Drive / Docs / Sheets preview shows a file inside the person's **own browser session** (an iframe of `drive.google.com` or `docs.google.com`). Study Lamp never sends a signed Study Lamp URL to any Google viewer service and never uses `docs.google.com/viewer?url=`; the preview URLs are built only from a validated Drive file id (a test enforces this). Only `drive.google.com` and `docs.google.com` are in the CSP `frame-src`.
 
 ## 7. If secrets leaked
 

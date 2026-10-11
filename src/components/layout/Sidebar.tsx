@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ListVideo, Clock, Star, Flag, PlayCircle, BookOpenCheck, Share2,
   ShieldCheck, Users, FolderKanban, Tags, Target, Compass, X, Settings, ChevronDown, Sparkles,
-  FileText, DatabaseBackup, CalendarRange, Database,
+  FileText, DatabaseBackup, CalendarRange, Database, SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -93,7 +93,8 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
         </button>
         {settingsOpen && (
           <div id="settings-navigation" className="ml-4 mt-1 flex flex-col gap-1 border-l border-border pl-2">
-            <SidebarLink href="/settings/ai" label="AI Connections" icon={Sparkles} active={pathname.startsWith("/settings/ai") || pathname === "/settings"} onClick={onClose} />
+            <SidebarLink href="/settings/general" label="General" icon={SlidersHorizontal} active={pathname.startsWith("/settings/general") || pathname === "/settings"} onClick={onClose} />
+            <SidebarLink href="/settings/ai" label="AI Connections" icon={Sparkles} active={pathname.startsWith("/settings/ai")} onClick={onClose} />
             <SidebarLink href="/settings/interests" label="Interests" icon={Compass} active={pathname.startsWith("/settings/interests")} onClick={onClose} />
             <SidebarLink href="/settings/categories" label="Categories" icon={FolderKanban} active={pathname.startsWith("/settings/categories")} onClick={onClose} />
             <SidebarLink href="/settings/google" label="Google" icon={CalendarRange} active={pathname.startsWith("/settings/google") || pathname.startsWith("/settings/drive")} onClick={onClose} />

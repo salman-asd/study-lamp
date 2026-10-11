@@ -4,13 +4,15 @@ import * as React from "react";
 import Link from "next/link";
 import { PDFViewer, type PluginRegistry } from "@embedpdf/react-pdf-viewer";
 import { Button } from "@/components/ui/button";
-import { BookOpenText, Download, ExternalLink, HardDrive, RotateCw } from "lucide-react";
+import { BookOpenText, Download, ExternalLink, HardDrive, Minus, Plus, RotateCw, Maximize, StretchHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { MAX_PDF_PREVIEW_BYTES, formatBytes, readResponseWithLimit } from "@/lib/documentViewerUtils";
 import { driveResponseErrorMessage } from "@/lib/driveErrors";
 import { pdfiumWasmUrl } from "@/lib/pdfAssets";
 import { prepareDocumentAnnotations } from "@/lib/documentAnnotations";
 import type { SaveStatus } from "@/lib/blobClient";
+import { clampZoom, decideInitialZoom, followsContainer, readManualZoom, writeManualZoom, type PdfZoomMode } from "@/lib/readerLayout";
+import type { ReaderZoomPref } from "@/lib/generalPrefs";
 
 const PDF_DOCUMENT_ID = "study-material-pdf";
 /** If nothing is on screen after this long, show ways out instead of an endless loading state. */
@@ -34,6 +36,12 @@ interface PdfReaderProps {
   annotationStatus?: SaveStatus;
   onExplainPage?: (pageNumber: number, text: string) => Promise<void>;
   explainingPage?: boolean;
+  /** Tailwind height classes for the reading area (from readerLayout.readerHeightClass). */
+  heightClass?: string;
+  /** Stable id used to remember a hand-set zoom in this browser. */
+  documentKey?: string;
+  /** Default zoom from Settings -> General. */
+  zoomPref?: ReaderZoomPref;
 }
 
 /**
@@ -63,6 +71,9 @@ export function PdfReader({
   annotationStatus,
   onExplainPage,
   explainingPage = false,
+  heightClass = "h-[68vh] min-h-[28rem] lg:h-[calc(100vh-15rem)] lg:min-h-[35rem]",
+  documentKey = "default",
+  zoomPref = "fit-width",
 }: PdfReaderProps) {
   const [readerError, setReaderError] = React.useState<string | null>(initialError ?? null);
   const [activeSourceUrl, setActiveSourceUrl] = React.useState(sourceUrl);
@@ -84,6 +95,15 @@ export function PdfReader({
   const pageNumber = React.useRef(Math.max(1, initialPage));
   const zoomLevel = React.useRef(Math.max(0.1, initialZoom));
   const restoringInitialPosition = React.useRef(true);
+  // Fit width/page unless the person zoomed by hand in this browser. A saved zoom from another screen is ignored.
+  const zoomMode = React.useRef<PdfZoomMode>(
+    typeof window === "undefined" ? zoomPref : decideInitialZoom(zoomPref, readManualZoom(window.localStorage, documentKey)),
+  );
+  const [zoomLabel, setZoomLabel] = React.useState<PdfZoomMode>(zoomMode.current);
+  /** Zoom events we caused ourselves (fit buttons, resize) are not a manual zoom and are not saved. */
+  const programmaticUntil = React.useRef(0);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const resizeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const annotationExportTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const retrying = React.useRef(false);
   const refreshedUrl = React.useRef<string | null>(null);
@@ -269,6 +289,40 @@ export function PdfReader({
     else open();
   }
 
+  function applyZoom(level: PdfZoomMode, manual: boolean) {
+    const zoomScope = registry.current?.getPlugin("zoom")?.provides?.()?.forDocument(PDF_DOCUMENT_ID);
+    if (!zoomScope) return;
+    const next: PdfZoomMode = typeof level === "number" ? clampZoom(level) : level;
+    zoomMode.current = next;
+    setZoomLabel(next);
+    // A number the person chose is remembered in this browser; a fit mode clears it.
+    if (typeof next !== "number") writeManualZoom(window.localStorage, documentKey, null);
+    else if (manual) writeManualZoom(window.localStorage, documentKey, next);
+    programmaticUntil.current = Date.now() + 800;
+    // The zoom plugin accepts a factor or its fit modes ("fit-width" / "fit-page"): verify against the installed 2.15.x types.
+    zoomScope.requestZoom(next as Parameters<typeof zoomScope.requestZoom>[0]);
+  }
+
+  // Keep fit-width / fit-page correct when the panel is hidden, focus mode toggles or the window changes.
+  React.useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      resizeTimer.current = setTimeout(() => {
+        if (!documentReady || restoringInitialPosition.current || !followsContainer(zoomMode.current)) return;
+        applyZoom(zoomMode.current, false);
+      }, 150);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+    };
+    // applyZoom only reads refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentReady, readerError]);
+
   async function retryAtCurrentPage(): Promise<void> {
     if (retrying.current) return;
     retrying.current = true;
@@ -337,12 +391,24 @@ export function PdfReader({
       setCurrentPage(restorePage);
       if (restorePage !== 1) scope.scrollToPage({ pageNumber: restorePage, behavior: "instant" });
       const zoomScope = zoom?.forDocument(PDF_DOCUMENT_ID);
-      if (initialZoomRef.current > 0 && Math.abs(initialZoomRef.current - 1) > 0.01) zoomScope?.requestZoom(initialZoomRef.current);
+      const startZoom = zoomMode.current;
+      programmaticUntil.current = Date.now() + 800;
+      if (typeof startZoom !== "number" || Math.abs(startZoom - 1) > 0.01) zoomScope?.requestZoom(startZoom as Parameters<NonNullable<typeof zoomScope>["requestZoom"]>[0]);
+      // Zooming moves the page offsets, so go back to the restored page once the layout settled.
+      if (restorePage !== 1) setTimeout(() => scroll.forDocument(PDF_DOCUMENT_ID).scrollToPage({ pageNumber: restorePage, behavior: "instant" }), 200);
       restoringInitialPosition.current = false;
     });
     const onZoomChange = zoom?.forDocument(PDF_DOCUMENT_ID).onStateChange((state: { currentZoomLevel: number }) => {
       if (!Number.isFinite(state.currentZoomLevel) || state.currentZoomLevel <= 0) return;
       zoomLevel.current = state.currentZoomLevel;
+      if (Date.now() < programmaticUntil.current) {
+        if (typeof zoomMode.current !== "number") setZoomLabel(zoomMode.current);
+        return;
+      }
+      // Pinch or wheel zoom inside the viewer: a manual zoom, so it stays and stops following the container.
+      zoomMode.current = clampZoom(state.currentZoomLevel);
+      setZoomLabel(zoomMode.current);
+      writeManualZoom(window.localStorage, documentKey, zoomMode.current);
       if (!restoringInitialPosition.current) latestProgress.current?.({ lastPage: pageNumber.current, zoom: state.currentZoomLevel });
     });
     const onAnnotationChange = annotations?.onAnnotationEvent((event: { documentId: string }) => {
@@ -398,6 +464,13 @@ export function PdfReader({
   return (
     <div className="overflow-hidden rounded-md border border-border bg-card">
       <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-1">
+          <Button type="button" variant={zoomLabel === "fit-width" ? "secondary" : "ghost"} size="sm" className="gap-1.5 px-2" aria-pressed={zoomLabel === "fit-width"} title="Fit width" onClick={() => applyZoom("fit-width", false)} disabled={!documentReady}><StretchHorizontal className="h-4 w-4" /><span className="hidden sm:inline">Fit width</span></Button>
+          <Button type="button" variant={zoomLabel === "fit-page" ? "secondary" : "ghost"} size="sm" className="gap-1.5 px-2" aria-pressed={zoomLabel === "fit-page"} title="Fit page" onClick={() => applyZoom("fit-page", false)} disabled={!documentReady}><Maximize className="h-4 w-4" /><span className="hidden sm:inline">Fit page</span></Button>
+          <Button type="button" variant={zoomLabel === 1 ? "secondary" : "ghost"} size="sm" className="px-2" aria-pressed={zoomLabel === 1} title="Actual size" onClick={() => applyZoom(1, true)} disabled={!documentReady}>100%</Button>
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Zoom out" aria-label="Zoom out" onClick={() => applyZoom(zoomLevel.current - 0.1, true)} disabled={!documentReady}><Minus className="h-4 w-4" /></Button>
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Zoom in" aria-label="Zoom in" onClick={() => applyZoom(zoomLevel.current + 0.1, true)} disabled={!documentReady}><Plus className="h-4 w-4" /></Button>
+        </div>
         <p className="text-xs text-muted-foreground">
           Page {currentPage}
           {annotationStatus && annotationStatus.state !== "saved" && (
@@ -406,7 +479,7 @@ export function PdfReader({
         </p>
         {onExplainPage && <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => void explainCurrentPage().catch((error) => toast.error(error instanceof Error ? error.message : "Couldn't read this page."))} loading={explainingPage} loadingText="Explaining…"><BookOpenText className="h-4 w-4" />Explain this page</Button>}
       </div>
-      <div className="relative h-[68vh] min-h-[28rem] overflow-hidden bg-muted lg:h-[calc(100vh-15rem)] lg:min-h-[35rem]">
+      <div ref={containerRef} className={`relative overflow-hidden bg-muted ${heightClass}`}>
         {!documentReady && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background p-6 text-center" role="status" aria-live="polite">
             <p className="text-sm text-muted-foreground">{status}</p>

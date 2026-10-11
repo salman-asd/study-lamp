@@ -45,6 +45,11 @@ Not measured yet: it needs a browser session with real data. Fill this table wit
 | extracted document text (`content/*` chunks) | large | **move to blob store (P5, not done yet)** |
 | transcripts, summaries, notes, quiz JSON | unknown | measure with `firestoreSizes.ts`, then move anything > 20 KB (P5) |
 
+## General preferences and thumbnail status (roadmap v10.1)
+
+- `users/{uid}.generalPrefs`: one map, whitelisted and validated on the server, always well under 1 KB. **1 read per login** (`GET /api/preferences/general`, cached in the browser and in `localStorage`) and **1 read + 1 write per changed setting** (`PUT`). Nothing is written per event; an unchanged value sends no request. It does not touch `aiSettings`.
+- Thumbnail status counts (Settings → Google → Drive): aggregate `count()` queries only when the card is opened, cached in the response for 60 seconds.
+
 ## P5 / P6 notes
 
 - Extracted document text: no `content/*` chunk writes any more; cache = `doctext` Drive blob (1 pointer read per extraction, +1 pointer write when cold). Legacy chunks are read once, copied, hash-verified, then deleted.

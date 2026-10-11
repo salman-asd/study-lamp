@@ -32,9 +32,11 @@ import { countStudyMaterials, filterAndSortStudyMaterials } from "@/lib/document
 import type { StudyMaterialSort, StudyMaterialTypeFilter } from "@/lib/documentFilters";
 import type { DrivePickerKind } from "@/lib/driveMime";
 import { SIZE_PLACEHOLDER, googleNativeLabel } from "@/lib/googleLinks";
+import { useGeneralPrefs } from "@/components/settings/GeneralPrefsProvider";
 import type { Category, DriveConnectionSummary, PersonalDocument, Tag } from "@/types";
 import { FileText, FileSpreadsheet, LayoutGrid, List, Plus, Presentation, SlidersHorizontal, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { errorMessage } from "@/lib/googleSettings";
 
 const VIEW_STORAGE_KEY = "study-materials-view";
 const TYPE_TABS: Array<{ value: StudyMaterialTypeFilter; label: string }> = [
@@ -91,8 +93,13 @@ function StudyMaterialsContent() {
   const [query, setQuery] = React.useState("");
   const [categoryId, setCategoryId] = React.useState("");
   const [tagIds, setTagIds] = React.useState<string[]>([]);
-  const [sort, setSort] = React.useState<StudyMaterialSort>("recent");
-  const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const { prefs, ready: prefsReady, setPref } = useGeneralPrefs();
+  // Default sort comes from Settings -> General; changing it here lasts for this visit only.
+  const [sortOverride, setSortOverride] = React.useState<StudyMaterialSort | null>(null);
+  const sort = sortOverride ?? prefs.studySort;
+  const setSort = setSortOverride;
+  const viewMode = prefs.studyViewMode;
+  const setViewMode = (mode: "grid" | "list") => { void setPref("studyViewMode", mode); };
   const [classificationTarget, setClassificationTarget] = React.useState<PersonalDocument | null>(null);
   const [editCategoryId, setEditCategoryId] = React.useState<string | null>(null);
   const [editTagIds, setEditTagIds] = React.useState<string[]>([]);
@@ -103,8 +110,8 @@ function StudyMaterialsContent() {
     setLoading(true);
     try {
       setDocuments(await listPersonalDocuments(user.uid));
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to load your study materials.");
+    } catch (error: unknown) {
+      toast.error(errorMessage(error, "Failed to load your study materials."));
     } finally {
       setLoading(false);
     }
@@ -125,18 +132,17 @@ function StudyMaterialsContent() {
     });
   }, [user]);
 
+  // One-time migration of the old per-browser view choice into the saved preferences.
   React.useEffect(() => {
+    if (!prefsReady) return;
     try {
       const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
-      if (stored === "grid" || stored === "list") setViewMode(stored);
+      if (stored === null) return;
+      window.localStorage.removeItem(VIEW_STORAGE_KEY);
+      if ((stored === "grid" || stored === "list") && stored !== prefs.studyViewMode) void setPref("studyViewMode", stored);
     } catch {}
-  }, []);
-
-  React.useEffect(() => {
-    try {
-      window.localStorage.setItem(VIEW_STORAGE_KEY, viewMode);
-    } catch {}
-  }, [viewMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsReady]);
 
   function changeType(nextType: string) {
     if (!TYPE_TABS.some((tab) => tab.value === nextType)) return;
@@ -151,8 +157,8 @@ function StudyMaterialsContent() {
     try {
       await deletePersonalDocument(await user.getIdToken(), documentId);
       setDocuments((previous) => previous.filter((document) => document.id !== documentId));
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to remove this document.");
+    } catch (error: unknown) {
+      toast.error(errorMessage(error, "Failed to remove this document."));
     }
   }
 
@@ -172,8 +178,8 @@ function StudyMaterialsContent() {
         ? { ...document, ...classification }
         : document));
       setClassificationTarget(null);
-    } catch (error: any) {
-      toast.error(error?.message || "Couldn't save document categories and tags.");
+    } catch (error: unknown) {
+      toast.error(errorMessage(error, "Couldn't save document categories and tags."));
     } finally {
       setSavingClassification(false);
     }

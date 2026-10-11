@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenText, ListChecks, NotebookPen, Sparkles } from "lucide-react";
+import { BookOpenText, ChevronDown, ChevronUp, ListChecks, Maximize2, Minimize2, NotebookPen, PanelRightClose, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,41 @@ export function DocumentStudyPanel(props: DocumentStudyPanelProps) {
     <aside className="hidden min-w-0 lg:block">
       <DocumentStudyTools {...toolsProps(props)} />
     </aside>
+  );
+}
+
+/**
+ * "Bottom" dock (large screens): a drawer under the reader. Collapsed it is one 44 px bar; expanded it
+ * takes up to 45 dvh (70 dvh when enlarged) and scrolls, so the PDF stays visible above it.
+ */
+export function DocumentStudyDrawer({ onHide, ...props }: DocumentStudyPanelProps & { onHide: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [tall, setTall] = React.useState(false);
+  const tabs: Array<[string, string]> = [["summary", "Summary"], ["quiz", "Quiz"], ["notes", "Notes"]];
+  return (
+    <section className="hidden rounded-md border border-border bg-card lg:block" aria-label="Study tools">
+      <div className="flex h-11 items-center gap-1 px-2">
+        <Button type="button" variant="ghost" size="sm" className="gap-1.5" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}Study tools
+        </Button>
+        {tabs.map(([value, label]) => (
+          <Button key={value} type="button" variant={open && props.study.studyTab === value ? "secondary" : "ghost"} size="sm" onClick={() => { props.study.setStudyTab(value); setOpen(true); }}>{label}</Button>
+        ))}
+        <div className="ml-auto flex items-center gap-1">
+          {open && (
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title={tall ? "Smaller" : "Larger"} aria-label={tall ? "Make the study tools smaller" : "Make the study tools larger"} onClick={() => setTall((value) => !value)}>
+              {tall ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Hide the study panel" aria-label="Hide the study panel" onClick={onHide}><PanelRightClose className="h-4 w-4" /></Button>
+        </div>
+      </div>
+      {open && (
+        <div className={`overflow-y-auto border-t border-border p-3 ${tall ? "max-h-[70dvh]" : "max-h-[45dvh]"}`}>
+          <DocumentStudyTools {...toolsProps(props)} />
+        </div>
+      )}
+    </section>
   );
 }
 
