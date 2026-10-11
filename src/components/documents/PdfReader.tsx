@@ -97,7 +97,7 @@ export function PdfReader({
   const restoringInitialPosition = React.useRef(true);
   // Fit width/page unless the person zoomed by hand in this browser. A saved zoom from another screen is ignored.
   const zoomMode = React.useRef<PdfZoomMode>(
-    typeof window === "undefined" ? zoomPref : decideInitialZoom(zoomPref, readManualZoom(window.localStorage, documentKey)),
+    decideInitialZoom(zoomPref, typeof window === "undefined" ? null : readManualZoom(window.localStorage, documentKey)),
   );
   const [zoomLabel, setZoomLabel] = React.useState<PdfZoomMode>(zoomMode.current);
   /** Zoom events we caused ourselves (fit buttons, resize) are not a manual zoom and are not saved. */
